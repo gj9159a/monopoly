@@ -20,13 +20,17 @@ def _perimeter_coords() -> list[tuple[int, int]]:
     return coords
 
 
-def _render_board(board: list[Cell], players: list[Player]) -> None:
+def _render_board(board: list[Cell], players: list[Player], active_player_id: int | None) -> None:
     coords = _perimeter_coords()
     grid = [["" for _ in range(11)] for _ in range(11)]
 
     players_at = {pos: [] for pos in range(40)}
     for player in players:
         players_at[player.position].append(player)
+
+    active_position = None
+    if active_player_id is not None and 0 <= active_player_id < len(players):
+        active_position = players[active_player_id].position
 
     for idx, cell in enumerate(board):
         row, col = coords[idx]
@@ -40,17 +44,23 @@ def _render_board(board: list[Cell], players: list[Player]) -> None:
             build_text = f"Отели: {cell.hotels}"
         elif cell.houses:
             build_text = f"Дома: {cell.houses}"
-        tokens = " ".join([f"P{p.player_id + 1}" for p in players_at[idx]])
+        tokens = " ".join(
+            [
+                f"P{p.player_id + 1}" + ("★" if p.player_id == active_player_id else "")
+                for p in players_at[idx]
+            ]
+        )
         players_text = f"Игроки: {tokens}" if tokens else ""
         parts = [f"<div class='name'>{cell.name}</div>"]
         for line in [owner_text, mort_text, build_text, players_text]:
             if line:
                 parts.append(f"<div class='meta'>{line}</div>")
-        grid[row][col] = "".join(parts)
+        cell_class = "cell active" if active_position == idx else "cell"
+        grid[row][col] = f"<div class='{cell_class}'>" + "".join(parts) + "</div>"
 
     html_rows = []
     for row in grid:
-        html_cells = [f"<div class='cell'>{cell}</div>" for cell in row]
+        html_cells = [cell if cell else "<div class='cell'></div>" for cell in row]
         html_rows.append("".join(html_cells))
     html = f"""
     <style>
@@ -70,6 +80,11 @@ def _render_board(board: list[Cell], players: list[Player]) -> None:
         font-size: 10px;
         line-height: 1.1;
         overflow: hidden;
+      }}
+      .cell.active {{
+        border: 2px solid #c44d29;
+        box-shadow: inset 0 0 0 2px #f2d3c7;
+        background: #fff3ee;
       }}
       .name {{
         font-weight: 700;
@@ -97,7 +112,7 @@ def _render_players(players: list[Player], board: list[Cell]) -> None:
             "Деньги": player.money,
             "Позиция": player.position,
             "В тюрьме": "Да" if player.in_jail else "Нет",
-            "Собственность": len(owned_map[player.player_id]),
+            "Активы": len(owned_map[player.player_id]),
         }
         for player in players
     ]
@@ -118,6 +133,41 @@ def _render_log(events: list[Event]) -> None:
         st.write(f"- {event.msg_ru}")
 
 
+def _render_turn_panel(state: GameState) -> None:
+    st.subheader("Текущий ход")
+    if state.game_over:
+        winner_name = (
+            state.players[state.winner_id].name if state.winner_id is not None else "не определен"
+        )
+        st.success(f"Игра окончена. Победитель: {winner_name}")
+        return
+
+    active_player = state.players[state.current_player]
+    current_cell = state.board[active_player.position]
+
+    last_roll = next(
+        (
+            event
+            for event in reversed(state.event_log)
+            if event.type in {"DICE_ROLL", "JAIL_ROLL"}
+        ),
+        None,
+    )
+    last_roll_text = last_roll.msg_ru if last_roll else "—"
+
+    st.write(f"**Активный игрок:** {active_player.name}")
+    st.write(f"**Клетка:** {current_cell.name}")
+    st.write(f"**Последний бросок:** {last_roll_text}")
+
+    tail_events = state.event_log[-3:]
+    if tail_events:
+        st.write("**Последние события:**")
+        for event in tail_events:
+            st.write(f"- {event.msg_ru}")
+    else:
+        st.write("**Последние события:** —")
+
+
 def main() -> None:
     st.set_page_config(page_title="Монополия — наблюдатель", layout="wide")
     st.title("Монополия — наблюдатель")
@@ -136,11 +186,12 @@ def main() -> None:
         step_once = st.button("Шаг")
         step_ten = st.button("+10 шагов")
         step_hundred = st.button("+100 шагов")
-        st.button("Авто (скоро)")
+        run_to_end = st.button("До конца игры")
         st.button("Сброс")
 
     if "engine" not in st.session_state or new_game:
         st.session_state.engine = create_engine(num_players, seed, bot_profiles=profiles)
+        st.session_state.run_info = ""
 
     if step_once or step_ten or step_hundred:
         steps = 1 if step_once else 10 if step_ten else 100
@@ -149,21 +200,30 @@ def main() -> None:
                 break
             st.session_state.engine.step()
 
+    if run_to_end:
+        max_steps = 5000
+        steps_done = 0
+        while steps_done < max_steps and not st.session_state.engine.state.game_over:
+            st.session_state.engine.step()
+            steps_done += 1
+        if st.session_state.engine.state.game_over:
+            st.session_state.run_info = f"Игра завершена за {steps_done} шагов."
+        else:
+            st.session_state.run_info = f"Достигнут лимит {max_steps} шагов."
+
     engine = st.session_state.engine
     state: GameState = engine.state
 
     col_left, col_right = st.columns([2, 1], gap="large")
     with col_left:
         st.subheader("Поле")
-        if state.game_over:
-            winner_name = (
-                state.players[state.winner_id].name if state.winner_id is not None else "не определен"
-            )
-            st.success(f"Игра окончена. Победитель: {winner_name}")
-        _render_board(state.board, state.players)
+        _render_board(state.board, state.players, state.current_player)
         _render_log(state.event_log)
 
     with col_right:
+        _render_turn_panel(state)
+        if st.session_state.get("run_info"):
+            st.info(st.session_state.run_info)
         st.subheader("Игроки")
         _render_players(state.players, state.board)
 
