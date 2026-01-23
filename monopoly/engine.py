@@ -21,6 +21,8 @@ class Engine:
         player = state.players[state.current_player]
         events: list[Event] = []
         turn_index = state.turn_index
+        if state.game_over:
+            return events
 
         if player.bankrupt:
             events.append(
@@ -32,6 +34,7 @@ class Engine:
                     payload={"player_id": player.player_id},
                 )
             )
+            events.extend(self._check_game_end(turn_index))
             self._advance_player()
             state.event_log.extend(events)
             state.turn_index += 1
@@ -50,6 +53,7 @@ class Engine:
         if player.in_jail:
             jail_events, advance_player = self._handle_jail_turn(player, turn_index)
             events.extend(jail_events)
+            events.extend(self._check_game_end(turn_index))
             state.event_log.extend(events)
             state.turn_index += 1
             if advance_player:
@@ -60,6 +64,7 @@ class Engine:
             player, turn_index, allow_extra_turn=True, count_doubles=True
         )
         events.extend(roll_events)
+        events.extend(self._check_game_end(turn_index))
 
         state.event_log.extend(events)
         state.turn_index += 1
@@ -194,20 +199,24 @@ class Engine:
         )
         action = decision.get("action")
 
-        if action == "pay" and player.money >= fine:
-            player.money -= fine
+        if action == "pay":
+            events.extend(
+                self._process_payment(
+                    player=player,
+                    amount=fine,
+                    creditor_id=None,
+                    turn_index=turn_index,
+                    reason="штраф тюрьмы",
+                    event_type="JAIL_PAY",
+                    message=f"{player.name} заплатил {fine} и вышел из тюрьмы",
+                    cell_index=None,
+                )
+            )
+            if player.bankrupt:
+                return events, True
             player.in_jail = False
             player.jail_turns = 0
             player.doubles_count = 0
-            events.append(
-                Event(
-                    type="JAIL_PAY",
-                    turn_index=turn_index,
-                    player_id=player.player_id,
-                    msg_ru=f"{player.name} заплатил {fine} и вышел из тюрьмы",
-                    payload={"amount": fine},
-                )
-            )
             roll_events, extra_turn, went_to_jail = self._roll_and_move(
                 player, turn_index, allow_extra_turn=True, count_doubles=True
             )
@@ -257,18 +266,22 @@ class Engine:
         )
 
         if player.jail_turns >= 3:
-            player.money -= fine
-            player.in_jail = False
-            player.jail_turns = 0
-            events.append(
-                Event(
-                    type="JAIL_PAY_FORCED",
+            events.extend(
+                self._process_payment(
+                    player=player,
+                    amount=fine,
+                    creditor_id=None,
                     turn_index=turn_index,
-                    player_id=player.player_id,
-                    msg_ru=f"{player.name} заплатил {fine} после 3 попыток и вышел из тюрьмы",
-                    payload={"amount": fine},
+                    reason="штраф тюрьмы",
+                    event_type="JAIL_PAY_FORCED",
+                    message=f"{player.name} заплатил {fine} после 3 попыток и вышел из тюрьмы",
+                    cell_index=None,
                 )
             )
+            if player.bankrupt:
+                return events, True
+            player.in_jail = False
+            player.jail_turns = 0
             cell, move_events = self._move_player(player, total, turn_index)
             events.extend(move_events)
             events.extend(self._handle_landing(player, cell, turn_index, total))
@@ -281,14 +294,16 @@ class Engine:
             return events
         if cell.cell_type == "tax":
             amount = cell.tax_amount or 0
-            player.money -= amount
-            events.append(
-                Event(
-                    type="PAY_TAX",
+            events.extend(
+                self._process_payment(
+                    player=player,
+                    amount=amount,
+                    creditor_id=None,
                     turn_index=turn_index,
-                    player_id=player.player_id,
-                    msg_ru=f"{player.name} заплатил налог {amount}",
-                    payload={"amount": amount, "cell_index": cell.index},
+                    reason="налог",
+                    event_type="PAY_TAX",
+                    message=f"{player.name} заплатил налог {amount}",
+                    cell_index=cell.index,
                 )
             )
             return events
@@ -305,22 +320,172 @@ class Engine:
                 elif self.state.rules.hr2_no_rent_in_jail and owner.in_jail:
                     rent = 0
                     reason = " (владелец в тюрьме)"
-                player.money -= rent
-                owner.money += rent
-                events.append(
-                    Event(
-                        type="PAY_RENT",
+                events.extend(
+                    self._process_payment(
+                        player=player,
+                        amount=rent,
+                        creditor_id=owner.player_id,
                         turn_index=turn_index,
-                        player_id=player.player_id,
-                        msg_ru=f"{player.name} заплатил ренту {rent} владельцу {owner.name}{reason}",
-                        payload={
-                            "amount": rent,
-                            "owner_id": owner.player_id,
-                            "cell_index": cell.index,
-                        },
+                        reason="рента",
+                        event_type="PAY_RENT",
+                        message=f"{player.name} заплатил ренту {rent} владельцу {owner.name}{reason}",
+                        cell_index=cell.index,
                     )
                 )
         return events
+
+    def _process_payment(
+        self,
+        player: Player,
+        amount: int,
+        creditor_id: int | None,
+        turn_index: int,
+        reason: str,
+        event_type: str,
+        message: str,
+        cell_index: int | None,
+    ) -> list[Event]:
+        events: list[Event] = []
+        amount_due = max(0, int(amount))
+
+        if amount_due == 0:
+            events.append(
+                Event(
+                    type=event_type,
+                    turn_index=turn_index,
+                    player_id=player.player_id,
+                    msg_ru=message,
+                    payload={
+                        "amount": 0,
+                        "due": 0,
+                        "owner_id": creditor_id,
+                        "cell_index": cell_index,
+                    },
+                )
+            )
+            return events
+
+        if player.money < amount_due:
+            events.extend(self._liquidate_buildings(player, turn_index))
+
+        paid = min(amount_due, player.money)
+        player.money -= paid
+        if creditor_id is not None:
+            self.state.players[creditor_id].money += paid
+
+        events.append(
+            Event(
+                type=event_type,
+                turn_index=turn_index,
+                player_id=player.player_id,
+                msg_ru=message,
+                payload={
+                    "amount": paid,
+                    "due": amount_due,
+                    "owner_id": creditor_id,
+                    "cell_index": cell_index,
+                },
+            )
+        )
+
+        if paid < amount_due:
+            events.extend(self._bankrupt_player(player, creditor_id, turn_index, reason))
+        return events
+
+    def _liquidate_buildings(self, player: Player, turn_index: int) -> list[Event]:
+        events: list[Event] = []
+        for cell in self.state.board:
+            if cell.owner_id != player.player_id:
+                continue
+            if cell.houses <= 0 and cell.hotels <= 0:
+                continue
+            if cell.house_cost is None:
+                continue
+            units = cell.houses + cell.hotels * 5
+            refund = int(units * cell.house_cost / 2)
+            if refund <= 0:
+                continue
+            player.money += refund
+            events.append(
+                Event(
+                    type="SELL_BUILDING",
+                    turn_index=turn_index,
+                    player_id=player.player_id,
+                    msg_ru=f"{player.name} продает строения на '{cell.name}' за {refund}",
+                    payload={"cell_index": cell.index, "refund": refund},
+                )
+            )
+            cell.houses = 0
+            cell.hotels = 0
+        return events
+
+    def _bankrupt_player(
+        self, player: Player, creditor_id: int | None, turn_index: int, reason: str
+    ) -> list[Event]:
+        if player.bankrupt:
+            return []
+        player.bankrupt = True
+        player.in_jail = False
+        player.jail_turns = 0
+        player.doubles_count = 0
+        player.money = 0
+
+        transferred: list[int] = []
+        for cell in self.state.board:
+            if cell.owner_id != player.player_id:
+                continue
+            cell.houses = 0
+            cell.hotels = 0
+            cell.mortgaged = False
+            if creditor_id is None:
+                cell.owner_id = None
+            else:
+                cell.owner_id = creditor_id
+                self.state.players[creditor_id].properties.append(cell.index)
+                transferred.append(cell.index)
+
+        player.properties.clear()
+        events = [
+            Event(
+                type="BANKRUPTCY",
+                turn_index=turn_index,
+                player_id=player.player_id,
+                msg_ru=f"{player.name} объявлен банкротом ({reason})",
+                payload={"creditor_id": creditor_id, "properties": transferred},
+            )
+        ]
+        events.extend(self._check_game_end(turn_index))
+        return events
+
+    def _check_game_end(self, turn_index: int) -> list[Event]:
+        if self.state.game_over:
+            return []
+        active = [p for p in self.state.players if not p.bankrupt]
+        if len(active) == 1:
+            winner = active[0]
+            self.state.game_over = True
+            self.state.winner_id = winner.player_id
+            return [
+                Event(
+                    type="GAME_END",
+                    turn_index=turn_index,
+                    player_id=winner.player_id,
+                    msg_ru=f"Игра окончена. Победитель: {winner.name}",
+                    payload={"winner_id": winner.player_id},
+                )
+            ]
+        if len(active) == 0:
+            self.state.game_over = True
+            return [
+                Event(
+                    type="GAME_END",
+                    turn_index=turn_index,
+                    player_id=None,
+                    msg_ru="Игра окончена. Победитель не определен",
+                    payload={"winner_id": None},
+                )
+            ]
+        return []
 
     def _calculate_rent(self, cell: Cell, owner_id: int, dice_total: int | None) -> int:
         if cell.cell_type == "property":

@@ -79,3 +79,22 @@ def test_three_doubles_send_to_jail():
     player = engine.state.players[0]
     assert player.in_jail is True
     assert any(event.type == "GO_TO_JAIL" for event in events)
+
+
+def test_game_end_on_bankruptcy():
+    engine = _engine_with_rng([1, 2])
+    player = engine.state.players[0]
+    owner = engine.state.players[1]
+    player.position = 0
+    player.money = 10
+
+    cell = engine.state.board[3]
+    cell.owner_id = owner.player_id
+    cell.rent = [100, 100, 100, 100, 100, 100]
+
+    events = engine.step()
+
+    assert player.bankrupt is True
+    assert engine.state.game_over is True
+    assert engine.state.winner_id == owner.player_id
+    assert any(event.type == "GAME_END" for event in events)

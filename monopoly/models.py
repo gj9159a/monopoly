@@ -67,3 +67,5 @@ class GameState:
     turn_index: int = 0
     current_player: int = 0
     event_log: list[Event] = field(default_factory=list)
+    game_over: bool = False
+    winner_id: int | None = None
