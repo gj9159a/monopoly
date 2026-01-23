@@ -815,7 +815,9 @@ class Engine:
             else:
                 base_rent = cell.rent_by_houses[0]
                 if cell.group and self._owns_group(owner_id, cell.group):
-                    base_rent *= 2
+                    group_cells = [c for c in self.state.board if c.group == cell.group]
+                    if all(c.houses == 0 and c.hotels == 0 for c in group_cells):
+                        base_rent *= 2
             return int(base_rent)
         if cell.cell_type == "railroad":
             if cell.rent is None:
