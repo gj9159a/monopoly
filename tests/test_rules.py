@@ -90,7 +90,7 @@ def test_game_end_on_bankruptcy():
 
     cell = engine.state.board[3]
     cell.owner_id = owner.player_id
-    cell.rent = [100, 100, 100, 100, 100, 100]
+    cell.rent_by_houses = [100, 100, 100, 100, 100, 100]
 
     events = engine.step()
 
