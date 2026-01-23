@@ -1,8 +1,8 @@
 - index: 0
-  name: "Старт"
+  name: "Вперед"
   type: "go"
 - index: 1
-  name: "Улица 1"
+  name: "Житная улица"
   type: "property"
   group: "brown"
   price: 60
@@ -11,10 +11,10 @@
   mortgage: 30
   mortgage_value: 30
 - index: 2
-  name: "Казна"
+  name: "Общественная казна"
   type: "community"
 - index: 3
-  name: "Улица 2"
+  name: "Нагатинская улица"
   type: "property"
   group: "brown"
   price: 60
@@ -23,11 +23,11 @@
   mortgage: 30
   mortgage_value: 30
 - index: 4
-  name: "Налог"
+  name: "Подоходный налог"
   type: "tax"
   amount: 200
 - index: 5
-  name: "Вокзал 1"
+  name: "Рижская железная дорога"
   type: "railroad"
   group: "railroad"
   price: 200
@@ -35,7 +35,7 @@
   mortgage: 100
   mortgage_value: 100
 - index: 6
-  name: "Улица 3"
+  name: "Варшавское шоссе"
   type: "property"
   group: "light_blue"
   price: 100
@@ -47,7 +47,7 @@
   name: "Шанс"
   type: "chance"
 - index: 8
-  name: "Улица 4"
+  name: "Улица Огарева"
   type: "property"
   group: "light_blue"
   price: 100
@@ -56,7 +56,7 @@
   mortgage: 50
   mortgage_value: 50
 - index: 9
-  name: "Улица 5"
+  name: "Первая Парковая улица"
   type: "property"
   group: "light_blue"
   price: 120
@@ -65,10 +65,10 @@
   mortgage: 60
   mortgage_value: 60
 - index: 10
-  name: "Тюрьма / В гостях"
+  name: "Тюрьма"
   type: "jail"
 - index: 11
-  name: "Улица 6"
+  name: "Улица Полянка"
   type: "property"
   group: "pink"
   price: 140
@@ -85,7 +85,7 @@
   mortgage: 75
   mortgage_value: 75
 - index: 13
-  name: "Улица 7"
+  name: "Улица Сретенка"
   type: "property"
   group: "pink"
   price: 140
@@ -94,7 +94,7 @@
   mortgage: 70
   mortgage_value: 70
 - index: 14
-  name: "Улица 8"
+  name: "Ростовская набережная"
   type: "property"
   group: "pink"
   price: 160
@@ -103,7 +103,7 @@
   mortgage: 80
   mortgage_value: 80
 - index: 15
-  name: "Вокзал 2"
+  name: "Курская железная дорога"
   type: "railroad"
   group: "railroad"
   price: 200
@@ -111,7 +111,7 @@
   mortgage: 100
   mortgage_value: 100
 - index: 16
-  name: "Улица 9"
+  name: "Рязанский проспект"
   type: "property"
   group: "orange"
   price: 180
@@ -120,10 +120,10 @@
   mortgage: 90
   mortgage_value: 90
 - index: 17
-  name: "Казна"
+  name: "Общественная казна"
   type: "community"
 - index: 18
-  name: "Улица 10"
+  name: "Улица Вавилова"
   type: "property"
   group: "orange"
   price: 180
@@ -132,7 +132,7 @@
   mortgage: 90
   mortgage_value: 90
 - index: 19
-  name: "Улица 11"
+  name: "Рублевское шоссе"
   type: "property"
   group: "orange"
   price: 200
@@ -141,10 +141,10 @@
   mortgage: 100
   mortgage_value: 100
 - index: 20
-  name: "Бесплатная парковка"
+  name: "Бесплатная стоянка"
   type: "free_parking"
 - index: 21
-  name: "Улица 12"
+  name: "Улица Тверская"
   type: "property"
   group: "red"
   price: 220
@@ -156,7 +156,7 @@
   name: "Шанс"
   type: "chance"
 - index: 23
-  name: "Улица 13"
+  name: "Пушкинская улица"
   type: "property"
   group: "red"
   price: 220
@@ -165,7 +165,7 @@
   mortgage: 110
   mortgage_value: 110
 - index: 24
-  name: "Улица 14"
+  name: "Площадь Маяковского"
   type: "property"
   group: "red"
   price: 240
@@ -174,7 +174,7 @@
   mortgage: 120
   mortgage_value: 120
 - index: 25
-  name: "Вокзал 3"
+  name: "Казанская железная дорога"
   type: "railroad"
   group: "railroad"
   price: 200
@@ -182,7 +182,7 @@
   mortgage: 100
   mortgage_value: 100
 - index: 26
-  name: "Улица 15"
+  name: "Улица Грузинский Вал"
   type: "property"
   group: "yellow"
   price: 260
@@ -191,7 +191,7 @@
   mortgage: 130
   mortgage_value: 130
 - index: 27
-  name: "Улица 16"
+  name: "Новинский бульвар"
   type: "property"
   group: "yellow"
   price: 260
@@ -200,7 +200,7 @@
   mortgage: 130
   mortgage_value: 130
 - index: 28
-  name: "Водоканал"
+  name: "Водопровод"
   type: "utility"
   group: "utility"
   price: 150
@@ -208,7 +208,7 @@
   mortgage: 75
   mortgage_value: 75
 - index: 29
-  name: "Улица 17"
+  name: "Смоленская площадь"
   type: "property"
   group: "yellow"
   price: 280
@@ -217,10 +217,10 @@
   mortgage: 140
   mortgage_value: 140
 - index: 30
-  name: "В тюрьму"
+  name: "Отправляйтесь в тюрьму"
   type: "go_to_jail"
 - index: 31
-  name: "Улица 18"
+  name: "Улица Щусева"
   type: "property"
   group: "green"
   price: 300
@@ -229,7 +229,7 @@
   mortgage: 150
   mortgage_value: 150
 - index: 32
-  name: "Улица 19"
+  name: "Гоголевский бульвар"
   type: "property"
   group: "green"
   price: 300
@@ -238,10 +238,10 @@
   mortgage: 150
   mortgage_value: 150
 - index: 33
-  name: "Казна"
+  name: "Общественная казна"
   type: "community"
 - index: 34
-  name: "Улица 20"
+  name: "Кутузовский проспект"
   type: "property"
   group: "green"
   price: 320
@@ -250,7 +250,7 @@
   mortgage: 160
   mortgage_value: 160
 - index: 35
-  name: "Вокзал 4"
+  name: "Ленинградская железная дорога"
   type: "railroad"
   group: "railroad"
   price: 200
@@ -261,7 +261,7 @@
   name: "Шанс"
   type: "chance"
 - index: 37
-  name: "Улица 21"
+  name: "Улица Малая Бронная"
   type: "property"
   group: "blue"
   price: 350
@@ -270,11 +270,11 @@
   mortgage: 175
   mortgage_value: 175
 - index: 38
-  name: "Налог"
+  name: "Уплатите сверхналог"
   type: "tax"
   amount: 100
 - index: 39
-  name: "Улица 22"
+  name: "Улица Арбат"
   type: "property"
   group: "blue"
   price: 400
