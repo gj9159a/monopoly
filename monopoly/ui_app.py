@@ -38,12 +38,12 @@ def _render_board(board: list[Cell], players: list[Player], active_player_id: in
         if cell.owner_id is not None:
             owner_name = players[cell.owner_id].name if cell.owner_id < len(players) else "?"
             owner_text = f"Вл: {owner_name}"
-        mort_text = "Ипотека" if cell.mortgaged else ""
+        mort_text = "ИП" if cell.mortgaged else ""
         build_text = ""
         if cell.hotels:
-            build_text = f"Отели: {cell.hotels}"
+            build_text = "🏨"
         elif cell.houses:
-            build_text = f"Дома: {cell.houses}"
+            build_text = f"🏠x{cell.houses}"
         tokens = " ".join(
             [
                 f"P{p.player_id + 1}" + ("★" if p.player_id == active_player_id else "")
