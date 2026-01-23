@@ -1,0 +1,7 @@
+hr1_always_auction: true
+hr2_no_rent_in_jail: true
+free_parking_empty: true
+no_trades: true
+go_salary: 200
+jail_fine: 50
+starting_cash: 1500
