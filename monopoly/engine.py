@@ -53,6 +53,8 @@ class Engine:
         if player.in_jail:
             jail_events, advance_player = self._handle_jail_turn(player, turn_index)
             events.extend(jail_events)
+            if not player.in_jail and not player.bankrupt:
+                events.extend(self._bot_economy_phase(player, turn_index))
             events.extend(self._check_game_end(turn_index))
             state.event_log.extend(events)
             state.turn_index += 1
@@ -64,6 +66,8 @@ class Engine:
             player, turn_index, allow_extra_turn=True, count_doubles=True
         )
         events.extend(roll_events)
+        if not player.bankrupt and not player.in_jail:
+            events.extend(self._bot_economy_phase(player, turn_index))
         events.extend(self._check_game_end(turn_index))
 
         state.event_log.extend(events)
@@ -438,7 +442,9 @@ class Engine:
             )
             if total > 0:
                 if player.money < total:
-                    events.extend(self._liquidate_buildings(player, turn_index))
+                    events.extend(self._liquidate_buildings(player, turn_index, total))
+                if player.money < total:
+                    events.extend(self._mortgage_properties(player, turn_index, total))
                 if player.money >= total:
                     player.money -= total
                     for other in others:
@@ -665,7 +671,9 @@ class Engine:
             return events
 
         if player.money < amount_due:
-            events.extend(self._liquidate_buildings(player, turn_index))
+            events.extend(self._liquidate_buildings(player, turn_index, amount_due))
+        if player.money < amount_due:
+            events.extend(self._mortgage_properties(player, turn_index, amount_due))
 
         paid = min(amount_due, player.money)
         player.money -= paid
@@ -686,31 +694,32 @@ class Engine:
             events.extend(self._bankrupt_player(player, creditor_id, turn_index, reason))
         return events
 
-    def _liquidate_buildings(self, player: Player, turn_index: int) -> list[Event]:
+    def _liquidate_buildings(self, player: Player, turn_index: int, target_cash: int) -> list[Event]:
         events: list[Event] = []
-        for cell in self.state.board:
-            if cell.owner_id != player.player_id:
-                continue
-            if cell.houses <= 0 and cell.hotels <= 0:
-                continue
-            if cell.house_cost is None:
-                continue
-            units = cell.houses + cell.hotels * 5
-            refund = int(units * cell.house_cost / 2)
-            if refund <= 0:
-                continue
+        if target_cash <= 0:
+            return events
+        while player.money < target_cash:
+            cell = self._find_sell_candidate(player.player_id)
+            if cell is None or cell.house_cost is None:
+                break
+            refund = int(cell.house_cost / 2)
+            if cell.hotels > 0:
+                cell.hotels = 0
+                cell.houses = 4
+                building = "hotel"
+            else:
+                cell.houses = max(0, cell.houses - 1)
+                building = "house"
             player.money += refund
             events.append(
                 Event(
                     type="SELL_BUILDING",
                     turn_index=turn_index,
                     player_id=player.player_id,
-                    msg_ru=f"{player.name} продает строения на '{cell.name}' за {refund}",
-                    payload={"cell_index": cell.index, "refund": refund},
+                    msg_ru=f"{player.name} продает {building} на '{cell.name}' за {refund}",
+                    payload={"cell_index": cell.index, "refund": refund, "building": building},
                 )
             )
-            cell.houses = 0
-            cell.hotels = 0
         return events
 
     def _bankrupt_player(
@@ -725,14 +734,21 @@ class Engine:
         player.money = 0
 
         transferred: list[int] = []
+        auction_events: list[Event] = []
         for cell in self.state.board:
             if cell.owner_id != player.player_id:
                 continue
             cell.houses = 0
             cell.hotels = 0
-            cell.mortgaged = False
             if creditor_id is None:
                 cell.owner_id = None
+                cell.mortgaged = False
+                if self.state.rules.hr1_always_auction and cell.cell_type in {
+                    "property",
+                    "railroad",
+                    "utility",
+                }:
+                    auction_events.extend(self._run_auction(cell, turn_index))
             else:
                 cell.owner_id = creditor_id
                 self.state.players[creditor_id].properties.append(cell.index)
@@ -753,6 +769,7 @@ class Engine:
                 payload={"creditor_id": creditor_id, "properties": transferred},
             )
         ]
+        events.extend(auction_events)
         events.extend(self._check_game_end(turn_index))
         return events
 
@@ -788,15 +805,15 @@ class Engine:
 
     def _calculate_rent(self, cell: Cell, owner_id: int, dice_total: int | None) -> int:
         if cell.cell_type == "property":
-            if cell.rent is None:
+            if cell.rent_by_houses is None:
                 return 0
             houses = cell.houses
             if cell.hotels > 0:
-                base_rent = cell.rent[5]
+                base_rent = cell.rent_by_houses[5]
             elif houses > 0:
-                base_rent = cell.rent[houses]
+                base_rent = cell.rent_by_houses[houses]
             else:
-                base_rent = cell.rent[0]
+                base_rent = cell.rent_by_houses[0]
                 if cell.group and self._owns_group(owner_id, cell.group):
                     base_rent *= 2
             return int(base_rent)
@@ -827,6 +844,202 @@ class Engine:
         if not group_cells:
             return False
         return all(cell.owner_id == owner_id for cell in group_cells)
+
+    def _group_cells(self, owner_id: int, group: str) -> list[Cell]:
+        return [cell for cell in self.state.board if cell.group == group and cell.owner_id == owner_id]
+
+    def _property_level(self, cell: Cell) -> int:
+        return cell.houses + cell.hotels * 5
+
+    def _find_sell_candidate(self, owner_id: int) -> Cell | None:
+        candidates: list[Cell] = []
+        for cell in self.state.board:
+            if cell.owner_id != owner_id or cell.cell_type != "property":
+                continue
+            if self._property_level(cell) <= 0:
+                continue
+            group_cells = self._group_cells(owner_id, cell.group or "")
+            if not group_cells:
+                continue
+            max_level = max(self._property_level(c) for c in group_cells)
+            if self._property_level(cell) == max_level:
+                candidates.append(cell)
+        if not candidates:
+            return None
+        candidates.sort(key=lambda c: (-self._property_level(c), c.index))
+        return candidates[0]
+
+    def _mortgage_properties(self, player: Player, turn_index: int, target_cash: int) -> list[Event]:
+        events: list[Event] = []
+        if target_cash <= 0:
+            return events
+        candidates = self._mortgage_candidates(player.player_id)
+        for cell in candidates:
+            if player.money >= target_cash:
+                break
+            events.extend(self._mortgage_property(player, cell, turn_index))
+        return events
+
+    def _mortgage_candidates(self, owner_id: int) -> list[Cell]:
+        candidates: list[Cell] = []
+        for cell in self.state.board:
+            if cell.owner_id != owner_id:
+                continue
+            if cell.cell_type not in {"property", "railroad", "utility"}:
+                continue
+            if self._can_mortgage_property(cell, owner_id):
+                candidates.append(cell)
+        if owner_id < len(self.bots):
+            bot = self.bots[owner_id]
+            prioritizer = getattr(bot, "prioritize_mortgage", None)
+            if callable(prioritizer):
+                return prioritizer(candidates)
+        candidates.sort(key=lambda c: (c.price or 0, c.index))
+        return candidates
+
+    def _can_mortgage_property(self, cell: Cell, owner_id: int) -> bool:
+        if cell.owner_id != owner_id:
+            return False
+        if cell.mortgaged:
+            return False
+        if cell.houses > 0 or cell.hotels > 0:
+            return False
+        if cell.group and cell.cell_type == "property":
+            group_cells = self._group_cells(owner_id, cell.group)
+            if any(self._property_level(c) > 0 for c in group_cells):
+                return False
+        return True
+
+    def _mortgage_property(self, player: Player, cell: Cell, turn_index: int) -> list[Event]:
+        if not self._can_mortgage_property(cell, player.player_id):
+            return []
+        mortgage_value = cell.mortgage_value or 0
+        cell.mortgaged = True
+        player.money += mortgage_value
+        return [
+            Event(
+                type="MORTGAGE",
+                turn_index=turn_index,
+                player_id=player.player_id,
+                msg_ru=f"{player.name} заложил '{cell.name}' за {mortgage_value}",
+                payload={"cell_index": cell.index, "amount": mortgage_value},
+            )
+        ]
+
+    def _unmortgage_cost(self, cell: Cell) -> int:
+        mortgage_value = cell.mortgage_value or 0
+        return int(mortgage_value * (1 + self.state.rules.interest_rate))
+
+    def _unmortgage_property(self, player: Player, cell: Cell, turn_index: int) -> list[Event]:
+        if cell.owner_id != player.player_id or not cell.mortgaged:
+            return []
+        cost = self._unmortgage_cost(cell)
+        if player.money < cost:
+            return []
+        player.money -= cost
+        cell.mortgaged = False
+        return [
+            Event(
+                type="UNMORTGAGE",
+                turn_index=turn_index,
+                player_id=player.player_id,
+                msg_ru=f"{player.name} выкупил ипотеку '{cell.name}' за {cost}",
+                payload={"cell_index": cell.index, "amount": cost},
+            )
+        ]
+
+    def _bank_houses_available(self) -> int:
+        total = sum(cell.houses for cell in self.state.board)
+        return self.state.rules.bank_houses - total
+
+    def _bank_hotels_available(self) -> int:
+        total = sum(cell.hotels for cell in self.state.board)
+        return self.state.rules.bank_hotels - total
+
+    def _can_build_on_cell(self, owner_id: int, cell: Cell) -> bool:
+        if cell.owner_id != owner_id or cell.cell_type != "property":
+            return False
+        if cell.group is None or not self._owns_group(owner_id, cell.group):
+            return False
+        group_cells = self._group_cells(owner_id, cell.group)
+        if any(c.mortgaged for c in group_cells):
+            return False
+        if cell.house_cost is None:
+            return False
+        levels = [self._property_level(c) for c in group_cells]
+        min_level = min(levels)
+        if self._property_level(cell) != min_level:
+            return False
+        if self._property_level(cell) >= 5:
+            return False
+        if self._property_level(cell) == 4 and self._bank_hotels_available() <= 0:
+            return False
+        if self._property_level(cell) < 4 and self._bank_houses_available() <= 0:
+            return False
+        return True
+
+    def _build_on_property(self, player: Player, cell: Cell, turn_index: int) -> list[Event]:
+        if not self._can_build_on_cell(player.player_id, cell):
+            return []
+        cost = cell.house_cost or 0
+        if player.money < cost:
+            return []
+        level = self._property_level(cell)
+        if level < 4:
+            cell.houses += 1
+            building = "house"
+        else:
+            cell.hotels = 1
+            cell.houses = 0
+            building = "hotel"
+        player.money -= cost
+        return [
+            Event(
+                type="BUILD",
+                turn_index=turn_index,
+                player_id=player.player_id,
+                msg_ru=f"{player.name} построил {building} на '{cell.name}' за {cost}",
+                payload={"cell_index": cell.index, "building": building, "cost": cost},
+            )
+        ]
+
+    def _build_candidates(self, owner_id: int) -> list[Cell]:
+        candidates = [
+            cell for cell in self.state.board if self._can_build_on_cell(owner_id, cell)
+        ]
+        candidates.sort(key=lambda c: (c.group or "", self._property_level(c), c.index))
+        return candidates
+
+    def _bot_economy_phase(self, player: Player, turn_index: int) -> list[Event]:
+        if player.bankrupt or self.state.game_over:
+            return []
+        bot = self.bots[player.player_id]
+        reserve = getattr(bot.profile, "reserve_cash", 100)
+        events: list[Event] = []
+
+        mortgaged_cells = [
+            cell
+            for cell in self.state.board
+            if cell.owner_id == player.player_id and cell.mortgaged
+        ]
+        mortgaged_cells.sort(key=lambda c: (c.price or 0, c.index), reverse=True)
+        for cell in mortgaged_cells:
+            cost = self._unmortgage_cost(cell)
+            if player.money - cost < reserve:
+                continue
+            events.extend(self._unmortgage_property(player, cell, turn_index))
+
+        while True:
+            candidates = self._build_candidates(player.player_id)
+            if not candidates:
+                break
+            cell = candidates[0]
+            cost = cell.house_cost or 0
+            if player.money - cost < reserve:
+                break
+            events.extend(self._build_on_property(player, cell, turn_index))
+
+        return events
 
     def _run_auction(self, cell: Cell, turn_index: int) -> list[Event]:
         state = self.state

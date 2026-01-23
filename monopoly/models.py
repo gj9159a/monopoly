@@ -37,6 +37,9 @@ class Rules:
     go_salary: int
     jail_fine: int
     starting_cash: int
+    interest_rate: float
+    bank_houses: int
+    bank_hotels: int
 
 
 @dataclass(slots=True)
@@ -47,8 +50,10 @@ class Cell:
     group: str | None = None
     price: int | None = None
     rent: list[int] | None = None
+    rent_by_houses: list[int] | None = None
     house_cost: int | None = None
     mortgage: int | None = None
+    mortgage_value: int | None = None
     rent_multiplier: list[int] | None = None
     tax_amount: int | None = None
     owner_id: int | None = None

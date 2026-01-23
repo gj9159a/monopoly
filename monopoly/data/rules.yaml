@@ -5,3 +5,6 @@ no_trades: true
 go_salary: 200
 jail_fine: 50
 starting_cash: 1500
+interest_rate: 0.1
+bank_houses: 32
+bank_hotels: 12

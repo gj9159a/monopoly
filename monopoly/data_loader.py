@@ -38,6 +38,9 @@ def load_rules(path: Path) -> Rules:
         "go_salary",
         "jail_fine",
         "starting_cash",
+        "interest_rate",
+        "bank_houses",
+        "bank_hotels",
     ]
     for key in required:
         if key not in data:
@@ -50,6 +53,9 @@ def load_rules(path: Path) -> Rules:
         go_salary=int(data["go_salary"]),
         jail_fine=int(data["jail_fine"]),
         starting_cash=int(data["starting_cash"]),
+        interest_rate=float(data["interest_rate"]),
+        bank_houses=int(data["bank_houses"]),
+        bank_hotels=int(data["bank_hotels"]),
     )
 
 
@@ -80,11 +86,20 @@ def load_board(path: Path) -> list[Cell]:
             group=raw.get("group"),
             price=raw.get("price"),
             rent=raw.get("rent"),
+            rent_by_houses=raw.get("rent_by_houses"),
             house_cost=raw.get("house_cost"),
             mortgage=raw.get("mortgage"),
+            mortgage_value=raw.get("mortgage_value"),
             rent_multiplier=raw.get("rent_multiplier"),
             tax_amount=raw.get("amount"),
         )
+
+        if cell.mortgage_value is None and cell.mortgage is not None:
+            cell.mortgage_value = cell.mortgage
+        if cell.mortgage_value is None and cell.price is not None:
+            cell.mortgage_value = int(cell.price / 2)
+        if cell.rent_by_houses is None and cell.rent is not None:
+            cell.rent_by_houses = cell.rent
 
         _validate_cell(cell)
         cells.append(cell)
@@ -121,15 +136,15 @@ def load_cards(path: Path, deck: str) -> list[Card]:
 
 def _validate_cell(cell: Cell) -> None:
     if cell.cell_type == "property":
-        _require_fields(cell, ["group", "price", "rent", "house_cost", "mortgage"])
-        if not isinstance(cell.rent, list) or len(cell.rent) != 6:
-            raise ValueError(f"Клетка {cell.index}: rent должен иметь 6 значений")
+        _require_fields(cell, ["group", "price", "rent_by_houses", "house_cost", "mortgage_value"])
+        if not isinstance(cell.rent_by_houses, list) or len(cell.rent_by_houses) != 6:
+            raise ValueError(f"Клетка {cell.index}: rent_by_houses должен иметь 6 значений")
     elif cell.cell_type == "railroad":
-        _require_fields(cell, ["group", "price", "rent", "mortgage"])
+        _require_fields(cell, ["group", "price", "rent", "mortgage_value"])
         if not isinstance(cell.rent, list) or len(cell.rent) != 4:
             raise ValueError(f"Клетка {cell.index}: rent должен иметь 4 значения")
     elif cell.cell_type == "utility":
-        _require_fields(cell, ["group", "price", "rent_multiplier", "mortgage"])
+        _require_fields(cell, ["group", "price", "rent_multiplier", "mortgage_value"])
         if not isinstance(cell.rent_multiplier, list) or len(cell.rent_multiplier) != 2:
             raise ValueError(f"Клетка {cell.index}: rent_multiplier должен иметь 2 значения")
     elif cell.cell_type == "tax":
