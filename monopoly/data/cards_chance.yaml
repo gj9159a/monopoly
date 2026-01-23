@@ -1,5 +1,33 @@
-- id: "chance_1"
-  text_ru: "Пример карты Шанс (замените текст)."
+- id: "chance_money_plus"
+  text_ru: "Пример: получите 50"
   effect:
-    type: "move"
-    target: "go"
+    type: "money"
+    amount: 50
+- id: "chance_money_minus"
+  text_ru: "Пример: заплатите 50"
+  effect:
+    type: "money"
+    amount: -50
+- id: "chance_move_to_start"
+  text_ru: "Пример: перейдите на Старт"
+  effect:
+    type: "move_to"
+    cell_index: 0
+- id: "chance_move_next_rail"
+  text_ru: "Пример: перейдите на следующий вокзал"
+  effect:
+    type: "move_to_next"
+    kind: "railroad"
+- id: "chance_go_to_jail"
+  text_ru: "Пример: отправляйтесь в тюрьму"
+  effect:
+    type: "go_to_jail"
+- id: "chance_get_out_of_jail"
+  text_ru: "Пример: карта выхода из тюрьмы"
+  effect:
+    type: "get_out_of_jail"
+- id: "chance_move_back"
+  text_ru: "Пример: вернитесь на 3 клетки"
+  effect:
+    type: "move_relative"
+    steps: -3

@@ -1,5 +1,19 @@
-- id: "community_1"
-  text_ru: "Пример карты Казна (замените текст)."
+- id: "community_receive_each"
+  text_ru: "Пример: получите по 10 от каждого"
   effect:
-    type: "collect"
+    type: "receive_from_each"
+    amount: 10
+- id: "community_pay_each"
+  text_ru: "Пример: заплатите каждому по 25"
+  effect:
+    type: "pay_each"
+    amount: 25
+- id: "community_money_plus"
+  text_ru: "Пример: получите 100"
+  effect:
+    type: "money"
     amount: 100
+- id: "community_move_to_jail"
+  text_ru: "Пример: отправляйтесь в тюрьму"
+  effect:
+    type: "go_to_jail"

@@ -57,6 +57,9 @@ class BaseBot:
         player_id = int(context["player_id"])
         player = state.players[player_id]
         fine = state.rules.jail_fine
+        has_card = bool(context.get("has_card")) and player.get_out_of_jail_cards
+        if has_card and player.money < fine + self.profile.reserve_cash:
+            return {"action": "use_card"}
         if player.money - fine >= self.profile.reserve_cash:
             return {"action": "pay"}
         return {"action": "roll"}

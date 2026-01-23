@@ -4,8 +4,8 @@ import random
 from pathlib import Path
 
 from .bots import BaseBot, create_bots
-from .data_loader import load_board, load_rules
-from .models import Cell, Event, GameState, Player
+from .data_loader import load_board, load_cards, load_rules
+from .models import Card, Cell, DeckState, Event, GameState, Player
 
 
 class Engine:
@@ -195,9 +195,25 @@ class Engine:
         events: list[Event] = []
         fine = state.rules.jail_fine
         decision = self.bots[player.player_id].decide(
-            state, {"type": "jail_decision", "player_id": player.player_id}
+            state,
+            {
+                "type": "jail_decision",
+                "player_id": player.player_id,
+                "has_card": bool(player.get_out_of_jail_cards),
+            },
         )
         action = decision.get("action")
+
+        if action == "use_card" and player.get_out_of_jail_cards:
+            events.extend(self._use_get_out_of_jail_card(player, turn_index))
+            player.in_jail = False
+            player.jail_turns = 0
+            player.doubles_count = 0
+            roll_events, extra_turn, went_to_jail = self._roll_and_move(
+                player, turn_index, allow_extra_turn=True, count_doubles=True
+            )
+            events.extend(roll_events)
+            return events, went_to_jail or not extra_turn
 
         if action == "pay":
             events.extend(
@@ -292,6 +308,12 @@ class Engine:
         if cell.cell_type == "go_to_jail":
             events.extend(self._send_to_jail(player, turn_index, reason="клетка 'В тюрьму'"))
             return events
+        if cell.cell_type == "chance":
+            events.extend(self._draw_card("chance", player, turn_index))
+            return events
+        if cell.cell_type == "community":
+            events.extend(self._draw_card("community", player, turn_index))
+            return events
         if cell.cell_type == "tax":
             amount = cell.tax_amount or 0
             events.extend(
@@ -334,6 +356,279 @@ class Engine:
                 )
         return events
 
+    def _draw_card(self, deck_name: str, player: Player, turn_index: int) -> list[Event]:
+        card = self._draw_from_deck(deck_name)
+        events: list[Event] = [
+            Event(
+                type="DRAW_CARD",
+                turn_index=turn_index,
+                player_id=player.player_id,
+                msg_ru=f"{player.name} тянет карту: {card.text_ru}",
+                payload={"deck": deck_name, "card_id": card.card_id, "text_ru": card.text_ru},
+            )
+        ]
+        events.extend(self._apply_card_effect(card, player, turn_index))
+        return events
+
+    def _draw_from_deck(self, deck_name: str) -> Card:
+        deck = self.state.decks.get(deck_name)
+        if deck is None:
+            raise ValueError(f"Нет колоды {deck_name}")
+        if not deck.draw_pile:
+            if not deck.discard:
+                raise ValueError(f"Колода {deck_name} пуста")
+            deck.draw_pile = deck.discard
+            deck.discard = []
+            self.state.rng.shuffle(deck.draw_pile)
+        return deck.draw_pile.pop(0)
+
+    def _apply_card_effect(self, card: Card, player: Player, turn_index: int) -> list[Event]:
+        effect = card.effect
+        effect_type = str(effect.get("type"))
+        events: list[Event] = []
+        payload: dict[str, int | str | None] = {
+            "card_id": card.card_id,
+            "deck": card.deck,
+            "effect_type": effect_type,
+        }
+
+        if effect_type == "money":
+            amount = int(effect.get("amount", 0))
+            payload["amount"] = amount
+            if amount >= 0:
+                player.money += amount
+                events.append(
+                    Event(
+                        type="CARD_EFFECT",
+                        turn_index=turn_index,
+                        player_id=player.player_id,
+                        msg_ru=f"{player.name} получает {amount} по карте",
+                        payload=payload,
+                    )
+                )
+            else:
+                events.extend(
+                    self._process_payment(
+                        player=player,
+                        amount=-amount,
+                        creditor_id=None,
+                        turn_index=turn_index,
+                        reason="карта",
+                        event_type="CARD_EFFECT",
+                        message=f"{player.name} платит {-amount} по карте",
+                        cell_index=None,
+                        extra_payload=payload,
+                    )
+                )
+
+        elif effect_type == "pay_each":
+            amount = int(effect.get("amount", 0))
+            others = [p for p in self.state.players if p.player_id != player.player_id and not p.bankrupt]
+            total = amount * len(others)
+            payload["amount"] = amount
+            payload["total"] = total
+            events.append(
+                Event(
+                    type="CARD_EFFECT",
+                    turn_index=turn_index,
+                    player_id=player.player_id,
+                    msg_ru=f"{player.name} платит каждому по {amount}",
+                    payload=payload,
+                )
+            )
+            if total > 0:
+                if player.money < total:
+                    events.extend(self._liquidate_buildings(player, turn_index))
+                if player.money >= total:
+                    player.money -= total
+                    for other in others:
+                        other.money += amount
+                else:
+                    events.extend(self._bankrupt_player(player, None, turn_index, "карта pay_each"))
+
+        elif effect_type == "receive_from_each":
+            amount = int(effect.get("amount", 0))
+            payload["amount"] = amount
+            events.append(
+                Event(
+                    type="CARD_EFFECT",
+                    turn_index=turn_index,
+                    player_id=player.player_id,
+                    msg_ru=f"{player.name} получает от каждого по {amount}",
+                    payload=payload,
+                )
+            )
+            for other in self.state.players:
+                if other.player_id == player.player_id or other.bankrupt:
+                    continue
+                events.extend(
+                    self._process_payment(
+                        player=other,
+                        amount=amount,
+                        creditor_id=player.player_id,
+                        turn_index=turn_index,
+                        reason="карта receive_from_each",
+                        event_type="CARD_PAYMENT",
+                        message=f"{other.name} платит {amount} игроку {player.name}",
+                        cell_index=None,
+                    )
+                )
+
+        elif effect_type == "move_to":
+            target = int(effect.get("cell_index", 0))
+            payload["cell_index"] = target
+            events.append(
+                Event(
+                    type="CARD_EFFECT",
+                    turn_index=turn_index,
+                    player_id=player.player_id,
+                    msg_ru=f"{player.name} перемещается на клетку {target}",
+                    payload=payload,
+                )
+            )
+            cell, move_events = self._move_player(player, (target - player.position) % len(self.state.board), turn_index)
+            events.extend(move_events)
+            events.extend(self._handle_landing(player, cell, turn_index, None))
+
+        elif effect_type == "move_relative":
+            steps = int(effect.get("steps", 0))
+            payload["steps"] = steps
+            events.append(
+                Event(
+                    type="CARD_EFFECT",
+                    turn_index=turn_index,
+                    player_id=player.player_id,
+                    msg_ru=f"{player.name} перемещается на {steps} клеток",
+                    payload=payload,
+                )
+            )
+            cell, move_events = self._move_relative(player, steps, turn_index)
+            events.extend(move_events)
+            events.extend(self._handle_landing(player, cell, turn_index, None))
+
+        elif effect_type == "go_to_jail":
+            events.append(
+                Event(
+                    type="CARD_EFFECT",
+                    turn_index=turn_index,
+                    player_id=player.player_id,
+                    msg_ru=f"{player.name} отправляется в тюрьму по карте",
+                    payload=payload,
+                )
+            )
+            events.extend(self._send_to_jail(player, turn_index, reason="карта"))
+
+        elif effect_type == "get_out_of_jail":
+            player.get_out_of_jail_cards.append(card)
+            events.append(
+                Event(
+                    type="CARD_EFFECT",
+                    turn_index=turn_index,
+                    player_id=player.player_id,
+                    msg_ru=f"{player.name} получает карту выхода из тюрьмы",
+                    payload=payload,
+                )
+            )
+
+        elif effect_type == "move_to_next":
+            kind = str(effect.get("kind", ""))
+            target = self._find_next_cell_index(player.position, kind)
+            payload["kind"] = kind
+            payload["cell_index"] = target
+            events.append(
+                Event(
+                    type="CARD_EFFECT",
+                    turn_index=turn_index,
+                    player_id=player.player_id,
+                    msg_ru=f"{player.name} перемещается на следующую клетку {kind}",
+                    payload=payload,
+                )
+            )
+            cell, move_events = self._move_player(
+                player, (target - player.position) % len(self.state.board), turn_index
+            )
+            events.extend(move_events)
+            events.extend(self._handle_landing(player, cell, turn_index, None))
+
+        else:
+            events.append(
+                Event(
+                    type="CARD_EFFECT",
+                    turn_index=turn_index,
+                    player_id=player.player_id,
+                    msg_ru=f"{player.name} получает неизвестный эффект карты",
+                    payload=payload,
+                )
+            )
+
+        events.extend(self._check_game_end(turn_index))
+        if effect_type != "get_out_of_jail":
+            self.state.decks[card.deck].discard.append(card)
+        return events
+
+    def _use_get_out_of_jail_card(self, player: Player, turn_index: int) -> list[Event]:
+        if not player.get_out_of_jail_cards:
+            return []
+        card = player.get_out_of_jail_cards.pop(0)
+        deck = self.state.decks.get(card.deck)
+        if deck is not None:
+            deck.discard.append(card)
+        return [
+            Event(
+                type="JAIL_CARD_USED",
+                turn_index=turn_index,
+                player_id=player.player_id,
+                msg_ru=f"{player.name} использует карту выхода из тюрьмы",
+                payload={"deck": card.deck, "card_id": card.card_id},
+            )
+        ]
+
+    def _move_relative(self, player: Player, steps: int, turn_index: int) -> tuple[Cell, list[Event]]:
+        state = self.state
+        events: list[Event] = []
+        old_pos = player.position
+        new_pos = (old_pos + steps) % len(state.board)
+        if steps >= 0 and new_pos < old_pos:
+            player.money += state.rules.go_salary
+            events.append(
+                Event(
+                    type="PASS_GO",
+                    turn_index=turn_index,
+                    player_id=player.player_id,
+                    msg_ru=f"{player.name} получил {state.rules.go_salary} за проход 'Старт'",
+                    payload={"amount": state.rules.go_salary},
+                )
+            )
+        player.position = new_pos
+        events.append(
+            Event(
+                type="MOVE",
+                turn_index=turn_index,
+                player_id=player.player_id,
+                msg_ru=f"{player.name} переместился на {new_pos}",
+                payload={"from": old_pos, "to": new_pos, "steps": steps},
+            )
+        )
+        cell = state.board[new_pos]
+        events.append(
+            Event(
+                type="LAND",
+                turn_index=turn_index,
+                player_id=player.player_id,
+                msg_ru=f"{player.name} попал на '{cell.name}'",
+                payload={"cell_index": cell.index, "cell_type": cell.cell_type},
+            )
+        )
+        return cell, events
+
+    def _find_next_cell_index(self, current_pos: int, kind: str) -> int:
+        for offset in range(1, len(self.state.board) + 1):
+            idx = (current_pos + offset) % len(self.state.board)
+            cell = self.state.board[idx]
+            if cell.cell_type == kind:
+                return idx
+        raise ValueError(f"На поле нет клетки типа {kind}")
+
     def _process_payment(
         self,
         player: Player,
@@ -344,9 +639,18 @@ class Engine:
         event_type: str,
         message: str,
         cell_index: int | None,
+        extra_payload: dict[str, int | str | None] | None = None,
     ) -> list[Event]:
         events: list[Event] = []
         amount_due = max(0, int(amount))
+        payload_base = {
+            "amount": 0,
+            "due": amount_due,
+            "owner_id": creditor_id,
+            "cell_index": cell_index,
+        }
+        if extra_payload:
+            payload_base.update(extra_payload)
 
         if amount_due == 0:
             events.append(
@@ -355,12 +659,7 @@ class Engine:
                     turn_index=turn_index,
                     player_id=player.player_id,
                     msg_ru=message,
-                    payload={
-                        "amount": 0,
-                        "due": 0,
-                        "owner_id": creditor_id,
-                        "cell_index": cell_index,
-                    },
+                    payload=payload_base,
                 )
             )
             return events
@@ -379,12 +678,7 @@ class Engine:
                 turn_index=turn_index,
                 player_id=player.player_id,
                 msg_ru=message,
-                payload={
-                    "amount": paid,
-                    "due": amount_due,
-                    "owner_id": creditor_id,
-                    "cell_index": cell_index,
-                },
+                payload={**payload_base, "amount": paid},
             )
         )
 
@@ -445,6 +739,11 @@ class Engine:
                 transferred.append(cell.index)
 
         player.properties.clear()
+        while player.get_out_of_jail_cards:
+            card = player.get_out_of_jail_cards.pop(0)
+            deck = self.state.decks.get(card.deck)
+            if deck is not None:
+                deck.discard.append(card)
         events = [
             Event(
                 type="BANKRUPTCY",
@@ -644,6 +943,8 @@ def create_game(num_players: int, seed: int, data_dir: Path | None = None) -> Ga
 
     rules = load_rules(data_dir / "rules.yaml")
     board = load_board(data_dir / "board.yaml")
+    chance_cards = load_cards(data_dir / "cards_chance.yaml", "chance")
+    community_cards = load_cards(data_dir / "cards_community.yaml", "community")
     rng = random.Random(seed)
 
     players = [
@@ -656,6 +957,11 @@ def create_game(num_players: int, seed: int, data_dir: Path | None = None) -> Ga
         for pid in range(num_players)
     ]
 
+    decks = {
+        "chance": _init_deck(chance_cards, rng),
+        "community": _init_deck(community_cards, rng),
+    }
+
     return GameState(
         seed=seed,
         rng=rng,
@@ -665,6 +971,7 @@ def create_game(num_players: int, seed: int, data_dir: Path | None = None) -> Ga
         turn_index=0,
         current_player=0,
         event_log=[],
+        decks=decks,
     )
 
 
@@ -685,3 +992,9 @@ def _find_cell_index(board: list[Cell], cell_type: str) -> int:
         if cell.cell_type == cell_type:
             return cell.index
     raise ValueError(f"На поле нет клетки типа {cell_type}")
+
+
+def _init_deck(cards: list[Card], rng: random.Random) -> DeckState:
+    draw_pile = list(cards)
+    rng.shuffle(draw_pile)
+    return DeckState(draw_pile=draw_pile, discard=[])

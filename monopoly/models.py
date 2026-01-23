@@ -6,6 +6,20 @@ from typing import Any
 
 
 @dataclass(slots=True)
+class Card:
+    card_id: str
+    text_ru: str
+    effect: dict[str, Any]
+    deck: str
+
+
+@dataclass(slots=True)
+class DeckState:
+    draw_pile: list[Card] = field(default_factory=list)
+    discard: list[Card] = field(default_factory=list)
+
+
+@dataclass(slots=True)
 class Event:
     type: str
     turn_index: int
@@ -54,7 +68,7 @@ class Player:
     doubles_count: int = 0
     bankrupt: bool = False
     properties: list[int] = field(default_factory=list)
-    get_out_of_jail_cards: int = 0
+    get_out_of_jail_cards: list[Card] = field(default_factory=list)
 
 
 @dataclass(slots=True)
@@ -69,3 +83,4 @@ class GameState:
     event_log: list[Event] = field(default_factory=list)
     game_over: bool = False
     winner_id: int | None = None
+    decks: dict[str, DeckState] = field(default_factory=dict)

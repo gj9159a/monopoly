@@ -5,7 +5,7 @@ from typing import Any
 
 import yaml
 
-from .models import Cell, Rules
+from .models import Card, Cell, Rules
 
 VALID_CELL_TYPES = {
     "go",
@@ -89,6 +89,34 @@ def load_board(path: Path) -> list[Cell]:
         _validate_cell(cell)
         cells.append(cell)
     return cells
+
+
+def load_cards(path: Path, deck: str) -> list[Card]:
+    data = _load_yaml(path)
+    if not isinstance(data, list):
+        raise ValueError(f"{path.name} должен содержать список карточек")
+    cards: list[Card] = []
+    for idx, raw in enumerate(data):
+        if not isinstance(raw, dict):
+            raise ValueError(f"Карточка {idx} должна быть объектом")
+        card_id = raw.get("id")
+        text_ru = raw.get("text_ru")
+        effect = raw.get("effect")
+        if not card_id or not text_ru:
+            raise ValueError(f"Карточка {idx} должна иметь id и text_ru")
+        if not isinstance(effect, dict) or "type" not in effect:
+            raise ValueError(f"Карточка {idx} должна иметь effect с type")
+        cards.append(
+            Card(
+                card_id=str(card_id),
+                text_ru=str(text_ru),
+                effect={k: v for k, v in effect.items()},
+                deck=deck,
+            )
+        )
+    if not cards:
+        raise ValueError(f"{path.name} должен содержать хотя бы одну карточку")
+    return cards
 
 
 def _validate_cell(cell: Cell) -> None:
