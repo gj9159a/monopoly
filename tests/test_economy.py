@@ -1,6 +1,21 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 from monopoly.engine import create_engine
+
+
+@dataclass
+class FixedRNG:
+    values: list[int]
+    index: int = 0
+
+    def randint(self, a: int, b: int) -> int:
+        if self.index >= len(self.values):
+            raise IndexError("Недостаточно значений для FixedRNG")
+        value = self.values[self.index]
+        self.index += 1
+        return value
 
 
 def _setup_brown_monopoly(engine):
@@ -124,3 +139,23 @@ def test_mortgage_before_bankruptcy():
 
     assert any(event.type == "MORTGAGE" for event in events)
     assert player.bankrupt is False
+
+
+def test_monopoly_double_rent_no_buildings():
+    engine = create_engine(num_players=2, seed=1)
+    tenant = engine.state.players[0]
+    owner = engine.state.players[1]
+    tenant.position = 0
+
+    cell_a = engine.state.board[1]
+    cell_b = engine.state.board[3]
+    cell_a.owner_id = owner.player_id
+    cell_b.owner_id = owner.player_id
+
+    engine.state.rng = FixedRNG([1, 2])
+
+    events = engine.step()
+    rent_events = [event for event in events if event.type == "PAY_RENT"]
+
+    assert rent_events
+    assert rent_events[-1].payload["amount"] == 8
