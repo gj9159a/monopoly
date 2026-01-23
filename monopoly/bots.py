@@ -28,6 +28,8 @@ class BaseBot:
     def decide(self, state: GameState, context: dict[str, Any]) -> dict[str, Any]:
         if context.get("type") == "auction_bid":
             return self._decide_auction_bid(state, context)
+        if context.get("type") == "jail_decision":
+            return self._decide_jail(state, context)
         raise ValueError(f"Неизвестный тип контекста: {context.get('type')}")
 
     def _decide_auction_bid(self, state: GameState, context: dict[str, Any]) -> dict[str, Any]:
@@ -50,6 +52,14 @@ class BaseBot:
         if next_bid <= max_bid and next_bid <= player.money:
             return {"action": "bid", "bid": next_bid}
         return {"action": "pass"}
+
+    def _decide_jail(self, state: GameState, context: dict[str, Any]) -> dict[str, Any]:
+        player_id = int(context["player_id"])
+        player = state.players[player_id]
+        fine = state.rules.jail_fine
+        if player.money - fine >= self.profile.reserve_cash:
+            return {"action": "pay"}
+        return {"action": "roll"}
 
 
 def create_bots(num_players: int, profile_names: list[str] | None = None) -> list[BaseBot]:
