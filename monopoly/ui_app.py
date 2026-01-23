@@ -154,10 +154,20 @@ def _render_turn_panel(state: GameState) -> None:
         None,
     )
     last_roll_text = last_roll.msg_ru if last_roll else "—"
+    last_card = next(
+        (event for event in reversed(state.event_log) if event.type == "DRAW_CARD"),
+        None,
+    )
+    last_effect = next(
+        (event for event in reversed(state.event_log) if event.type == "CARD_EFFECT"),
+        None,
+    )
 
     st.write(f"**Активный игрок:** {active_player.name}")
     st.write(f"**Клетка:** {current_cell.name}")
     st.write(f"**Последний бросок:** {last_roll_text}")
+    st.write(f"**Последняя карта:** {last_card.msg_ru if last_card else '—'}")
+    st.write(f"**Результат карты:** {last_effect.msg_ru if last_effect else '—'}")
 
     tail_events = state.event_log[-3:]
     if tail_events:
