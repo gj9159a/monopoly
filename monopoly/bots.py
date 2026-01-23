@@ -64,6 +64,11 @@ class BaseBot:
             return {"action": "pay"}
         return {"action": "roll"}
 
+    def prioritize_mortgage(self, cells: list[Cell]) -> list[Cell]:
+        if self.profile.name in {"Aggressive", "Builder"}:
+            return sorted(cells, key=lambda c: (c.price or 0, c.index))
+        return sorted(cells, key=lambda c: (c.price or 0, c.index), reverse=True)
+
 
 def create_bots(num_players: int, profile_names: list[str] | None = None) -> list[BaseBot]:
     if profile_names is None or not profile_names:
