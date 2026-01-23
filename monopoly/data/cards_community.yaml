@@ -1,0 +1,5 @@
+- id: "community_1"
+  text_ru: "Пример карты Казна (замените текст)."
+  effect:
+    type: "collect"
+    amount: 100

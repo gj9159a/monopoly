@@ -1,0 +1,5 @@
+- id: "chance_1"
+  text_ru: "Пример карты Шанс (замените текст)."
+  effect:
+    type: "move"
+    target: "go"
