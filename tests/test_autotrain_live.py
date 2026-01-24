@@ -5,7 +5,8 @@ import subprocess
 import sys
 from pathlib import Path
 
-from monopoly.io_utils import tail_lines
+from monopoly.io_utils import tail_lines, write_json_atomic, write_text_atomic
+from monopoly.run_utils import list_runs
 from monopoly.status import REQUIRED_STATUS_FIELDS, read_status
 
 
@@ -31,7 +32,7 @@ def _sample_status() -> dict[str, object]:
     }
 
 
-def test_status_schema(tmp_path: Path) -> None:
+def test_status_json_schema(tmp_path: Path) -> None:
     status = _sample_status()
     assert REQUIRED_STATUS_FIELDS.issubset(status.keys())
     path = tmp_path / "status.json"
@@ -46,6 +47,27 @@ def test_tail_reader(tmp_path: Path) -> None:
     path.write_text("\n".join(lines), encoding="utf-8")
     tail = tail_lines(path, max_lines=5)
     assert tail == lines[-5:]
+
+
+def test_atomic_write_helpers(tmp_path: Path) -> None:
+    json_path = tmp_path / "status.json"
+    payload = {"ok": True, "value": 3}
+    write_json_atomic(json_path, payload)
+    assert json.loads(json_path.read_text(encoding="utf-8")) == payload
+
+    text_path = tmp_path / "summary.txt"
+    write_text_atomic(text_path, "hello")
+    assert text_path.read_text(encoding="utf-8") == "hello"
+
+
+def test_runs_discovery(tmp_path: Path) -> None:
+    runs = tmp_path / "runs"
+    runs.mkdir()
+    (runs / "20260101-000001").mkdir()
+    (runs / "20260102-000001").mkdir()
+    (runs / "20241231-235959").mkdir()
+    found = list_runs(runs, limit=2)
+    assert [path.name for path in found] == ["20260102-000001", "20260101-000001"]
 
 
 def test_live_backend_smoke(tmp_path: Path) -> None:

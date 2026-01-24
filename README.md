@@ -18,6 +18,12 @@ pip install -e .[dev]
 streamlit run app.py
 ```
 
+## Как пользоваться (коротко)
+
+1) Откройте Streamlit и выберите режим **Тренировка**. Нажмите **Старт** — обучение идёт до плато.
+2) По завершении нажмите **Запустить live матч сейчас** или перейдите в **Live матч** и стартуйте 6 deep‑ботов.
+3) Лучшие параметры лежат в `runs/<timestamp>/best.json` — их можно переиспользовать для новых матчей.
+
 ## Тесты
 
 ```bash
@@ -113,6 +119,8 @@ python -m monopoly.autotrain run --profile deep --workers auto
 - `progress.txt` — человекочитаемый лог
 - `best.json` — лучшие параметры
 - `last_bench.json` — последний бенчмарк
+- `summary.txt` — короткий итог по запуску
+- `error.log` — stderr при падении (если было)
 
 Live матч (6 “deep planner” ботов, запись состояния для UI):
 
@@ -129,7 +137,7 @@ python -m monopoly.bench --games 200 --players 6 --seed 123 --candidate trained_
 Можно использовать фиксированный набор сидов:
 
 ```bash
-python -m monopoly.bench --games 200 --seeds-file runs/seeds.txt --candidate trained_params.json --baseline monopoly/data/params_baseline.json --league-dir monopoly/data/league --opponents mixed
+python -m monopoly.bench --games 200 --seeds-file monopoly/data/seeds.txt --candidate trained_params.json --baseline monopoly/data/params_baseline.json --league-dir monopoly/data/league --opponents mixed
 ```
 
 ## Лига и прогресс
@@ -156,7 +164,7 @@ python -m monopoly.progress --league-dir monopoly/data/league --baseline monopol
 С фиксированным seed pack:
 
 ```bash
-python -m monopoly.progress --league-dir monopoly/data/league --baseline monopoly/data/params_baseline.json --games 200 --seeds-file runs/seeds.txt
+python -m monopoly.progress --league-dir monopoly/data/league --baseline monopoly/data/params_baseline.json --games 200 --seeds-file monopoly/data/seeds.txt
 ```
 
 Рекомендуемый workflow:
@@ -174,6 +182,7 @@ python -m monopoly.progress --league-dir monopoly/data/league --baseline monopol
 - `monopoly/data/rules.yaml` — флаги правил и базовые параметры (HR1/HR2/штраф тюрьмы и т.д.).
 - `monopoly/data/params_baseline.json` — baseline параметры бота.
 - `monopoly/data/league/*.json` — пул лучших параметров для self-play.
+- `monopoly/data/seeds.txt` — фиксированный набор сидов для бенчмарка/прогресса.
 
 ## Реализованные правила
 
