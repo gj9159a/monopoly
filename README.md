@@ -33,7 +33,25 @@ python -m pytest -k smoke
 ## Seed и боты
 
 - Seed и число ботов задаются в левой панели Streamlit.
-- Профили ботов пока базовые (Aggressive/Conservative/Builder/CashSaver).
+- Используется один параметризованный бот. Можно указать путь к файлу параметров (json/yaml).
+
+## Обучение параметров (self-play, CEM)
+
+Пример запуска тренировки:
+
+```bash
+python -m monopoly.train --iters 50 --population 48 --elite 12 --games-per-cand 20 --players 6 --seed 123 --out trained_params.json
+```
+
+Будут созданы:
+- `trained_params.json` — лучший набор параметров
+- `train_log.csv` — лог обучения
+
+Запуск симуляции с сохранёнными параметрами:
+
+```bash
+python -m monopoly.sim --params trained_params.json --players 6 --seed 42 --games 1
+```
 
 ## Данные локализации и правил
 
