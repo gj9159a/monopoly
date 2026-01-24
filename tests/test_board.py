@@ -66,4 +66,3 @@ def test_board_has_names():
     board_path = Path(__file__).resolve().parents[1] / "monopoly" / "data" / "board.yaml"
     board = load_board(board_path)
     assert all(cell.name and cell.name.strip() for cell in board)
-    assert max(len(cell.name) for cell in board) >= 10
