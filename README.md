@@ -10,6 +10,8 @@ python -m venv .venv
 pip install -e .[dev]
 ```
 
+Важно: размещайте репозиторий в обычной папке с правами записи (не Temp/Program Files), иначе pip/pytest могут не иметь прав на временные каталоги.
+
 ## Запуск
 
 ```bash
@@ -20,6 +22,16 @@ streamlit run app.py
 
 ```bash
 pytest
+python -m pytest
+```
+
+Проверка установки из коробки:
+
+```bash
+python -m venv .venv
+.venv\Scripts\activate
+python -m pip install -U pip
+python -m pip install -e .[dev]
 python -m pytest
 ```
 
