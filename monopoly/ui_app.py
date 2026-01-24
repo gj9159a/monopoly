@@ -229,6 +229,7 @@ def _build_center_panel(state: Any, mode: str, thinking: dict[str, Any] | None =
     active_cell_name = _get(active_cell, "name", "—") if active_cell else "—"
     active_player_name = _get(active_player, "name", "—") if active_player else "—"
     last_roll_text = _event_msg(last_roll) if last_roll else "—"
+    jail_text = "Да" if active_player and _get(active_player, "in_jail", False) else "Нет"
 
     return f"""
     <div class='center-grid'>
@@ -237,6 +238,7 @@ def _build_center_panel(state: Any, mode: str, thinking: dict[str, Any] | None =
         <div class='center-value'>{active_player_name}</div>
         <div class='center-meta'>Клетка: {active_cell_name}</div>
         <div class='center-meta'>Последний бросок: {last_roll_text}</div>
+        <div class='center-meta'>Тюрьма: {jail_text}</div>
         {thinking_html}
       </div>
       <div class='center-block'>
@@ -289,19 +291,22 @@ def _render_board(
         row, col = coords[idx]
         owner_text = ""
         owner_id = _get(cell, "owner_id")
+        cell_type = str(_get(cell, "cell_type", ""))
+        ownable = cell_type in {"property", "railroad", "utility"}
         if owner_id is not None and 0 <= int(owner_id) < len(players):
             owner_text = f"Вл: P{int(owner_id)+1}"
-        mort_text = "ИП" if _get(cell, "mortgaged", False) else ""
+        elif ownable:
+            owner_text = "Вл: Банк"
+        mort_text = "<span class='badge badge-mort'>ИП</span>" if _get(cell, "mortgaged", False) else ""
         build_text = ""
         if _get(cell, "hotels", 0):
-            build_text = "🏨"
+            build_text = "<span class='badge badge-build'>Н</span>"
         elif _get(cell, "houses", 0):
-            build_text = f"🏠{_get(cell, 'houses', 0)}"
+            build_text = f"<span class='badge badge-build'>Д{_get(cell, 'houses', 0)}</span>"
         tokens = " ".join(
             [_player_badge(p, active_player_id) for p in players_at[idx]]
         )
         players_text = f"{tokens}" if tokens else ""
-        cell_type = str(_get(cell, "cell_type", ""))
         type_label = _cell_type_label(cell_type)
         type_icon = _cell_icon(cell_type)
         color = GROUP_COLORS.get(str(_get(cell, "group", "")), "")
@@ -355,6 +360,11 @@ def _render_board(
         background: #f2e8d8;
         border: 2px solid #bfae98;
         font-weight: 700;
+        text-transform: uppercase;
+      }}
+      .cell.corner .cell-title {{
+        font-size: 13px;
+        text-align: center;
       }}
       .cell-title {{
         font-weight: 700;
@@ -373,11 +383,28 @@ def _render_board(
       .cell-meta {{
         font-size: 10px;
         color: #4a3e2d;
+        min-height: 14px;
       }}
       .cell-players {{
         font-size: 10px;
         color: #2f2a24;
         font-weight: 600;
+      }}
+      .badge {{
+        display: inline-block;
+        padding: 1px 4px;
+        border-radius: 6px;
+        font-size: 9px;
+        line-height: 1.2;
+        font-weight: 700;
+      }}
+      .badge-mort {{
+        background: #e8c6c6;
+        color: #8c1f1f;
+      }}
+      .badge-build {{
+        background: #d6e8c6;
+        color: #1f6b1f;
       }}
       .color-strip {{
         height: 6px;
