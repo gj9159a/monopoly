@@ -27,6 +27,12 @@ def _setup_brown_monopoly(engine):
     return player, cell_a, cell_b
 
 
+def _last_rent_amount(events):
+    rent_events = [event for event in events if event.type == "PAY_RENT"]
+    assert rent_events
+    return rent_events[-1].payload["amount"]
+
+
 def test_mortgage_disables_rent():
     engine = create_engine(num_players=2, seed=1)
     tenant = engine.state.players[0]
@@ -37,10 +43,7 @@ def test_mortgage_disables_rent():
 
     tenant.position = 0
     events = engine.step()
-    rent_events = [event for event in events if event.type == "PAY_RENT"]
-
-    assert rent_events
-    assert rent_events[-1].payload["amount"] == 0
+    assert _last_rent_amount(events) == 0
 
 
 def test_unmortgage_cost_includes_interest():
@@ -155,7 +158,70 @@ def test_monopoly_double_rent_no_buildings():
     engine.state.rng = FixedRNG([1, 2])
 
     events = engine.step()
-    rent_events = [event for event in events if event.type == "PAY_RENT"]
+    assert _last_rent_amount(events) == 8
 
-    assert rent_events
-    assert rent_events[-1].payload["amount"] == 8
+
+def test_monopoly_double_rent_mortgaged_priority():
+    engine = create_engine(num_players=2, seed=1)
+    tenant = engine.state.players[0]
+    owner = engine.state.players[1]
+    tenant.position = 0
+
+    cell_a = engine.state.board[1]
+    cell_b = engine.state.board[3]
+    cell_a.owner_id = owner.player_id
+    cell_b.owner_id = owner.player_id
+    cell_b.mortgaged = True
+
+    engine.state.rng = FixedRNG([1, 2])
+
+    events = engine.step()
+    assert _last_rent_amount(events) == 0
+
+
+def test_monopoly_double_rent_owner_in_jail_priority():
+    engine = create_engine(num_players=2, seed=1)
+    tenant = engine.state.players[0]
+    owner = engine.state.players[1]
+    tenant.position = 0
+
+    cell_a = engine.state.board[1]
+    cell_b = engine.state.board[3]
+    cell_a.owner_id = owner.player_id
+    cell_b.owner_id = owner.player_id
+    owner.in_jail = True
+
+    engine.state.rng = FixedRNG([1, 2])
+
+    events = engine.step()
+    assert _last_rent_amount(events) == 0
+
+
+def test_no_double_rent_for_railroads():
+    engine = create_engine(num_players=2, seed=1)
+    tenant = engine.state.players[0]
+    owner = engine.state.players[1]
+    tenant.position = 3
+
+    for idx in [5, 15, 25, 35]:
+        engine.state.board[idx].owner_id = owner.player_id
+
+    engine.state.rng = FixedRNG([1, 1])
+
+    events = engine.step()
+    assert _last_rent_amount(events) == 200
+
+
+def test_no_double_rent_for_utilities():
+    engine = create_engine(num_players=2, seed=1)
+    tenant = engine.state.players[0]
+    owner = engine.state.players[1]
+    tenant.position = 10
+
+    engine.state.board[12].owner_id = owner.player_id
+    engine.state.board[28].owner_id = owner.player_id
+
+    engine.state.rng = FixedRNG([1, 1])
+
+    events = engine.step()
+    assert _last_rent_amount(events) == 20

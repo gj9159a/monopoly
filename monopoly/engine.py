@@ -338,7 +338,6 @@ class Engine:
                 events.extend(self._run_auction(cell, turn_index))
             elif cell.owner_id is not None and cell.owner_id != player.player_id:
                 owner = self.state.players[cell.owner_id]
-                rent = self._calculate_rent(cell, owner.player_id, dice_total)
                 reason = ""
                 if cell.mortgaged:
                     rent = 0
@@ -346,6 +345,8 @@ class Engine:
                 elif self.state.rules.hr2_no_rent_in_jail and owner.in_jail:
                     rent = 0
                     reason = " (владелец в тюрьме)"
+                else:
+                    rent = self._calculate_rent(cell, owner.player_id, dice_total)
                 events.extend(
                     self._process_payment(
                         player=player,
