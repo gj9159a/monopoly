@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import hashlib
 import json
 import random
 import time
@@ -15,6 +16,13 @@ from typing import Iterable, Sequence
 from .engine import create_engine
 from .models import GameState
 from .params import BotParams, PARAM_SPECS, load_params, params_to_vector, save_params, vector_to_params
+
+
+@dataclass(frozen=True)
+class EvalResult:
+    fitness: float
+    win_rate: float
+    avg_net_worth: float
 
 
 def _net_worth(state: GameState, player_id: int) -> int:
@@ -39,6 +47,40 @@ def score_player(state: GameState, player_id: int, first_bankrupt_id: int | None
     if first_bankrupt_id == player_id:
         score -= 0.2
     return score
+
+
+def _hash_text(payload: str) -> str:
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def _hash_params(params: BotParams) -> str:
+    payload = json.dumps(params.to_dict(), sort_keys=True)
+    return _hash_text(payload)
+
+
+def _hash_params_list(params_list: Sequence[BotParams]) -> str:
+    payload = "|".join(_hash_params(params) for params in params_list)
+    return _hash_text(payload)
+
+
+def _hash_seeds(seeds: Sequence[int]) -> str:
+    payload = ",".join(str(seed) for seed in seeds)
+    return _hash_text(payload)
+
+
+def _make_cache_key(
+    candidate: BotParams,
+    eval_config: dict[str, int | str],
+    seeds_hash: str,
+    opponents_pool_hash: str,
+) -> str:
+    payload = {
+        "candidate": _hash_params(candidate),
+        "eval": eval_config,
+        "seeds": seeds_hash,
+        "opponents": opponents_pool_hash,
+    }
+    return _hash_text(json.dumps(payload, sort_keys=True))
 
 
 def play_game(
@@ -116,30 +158,173 @@ def _select_opponents(rng: random.Random, pool: Sequence[BotParams], count: int)
     return [pool[rng.randrange(len(pool))] for _ in range(count)]
 
 
-def evaluate_candidate(
+def _build_params_by_seat(
     candidate: BotParams,
+    opponents_pool: Sequence[BotParams],
+    num_players: int,
+    game_seed: int,
+    seat: int,
+    case_index: int,
+    seed: int,
+) -> list[BotParams]:
+    rng = random.Random(seed + game_seed * 1013 + seat * 917 + case_index * 37)
+    opponents = _select_opponents(rng, opponents_pool, num_players - 1)
+    params_by_seat: list[BotParams] = []
+    opp_iter = iter(opponents)
+    for seat_idx in range(num_players):
+        if seat_idx == seat:
+            params_by_seat.append(candidate)
+        else:
+            params_by_seat.append(next(opp_iter))
+    return params_by_seat
+
+
+def _eval_case(
+    task: tuple[
+        int,
+        BotParams,
+        int,
+        int,
+        int,
+        int,
+        int,
+        list[BotParams],
+        int,
+    ],
+) -> tuple[int, float, int, int]:
+    (
+        cand_index,
+        candidate,
+        game_seed,
+        seat,
+        case_index,
+        num_players,
+        max_steps,
+        opponents_pool,
+        seed,
+    ) = task
+    params_by_seat = _build_params_by_seat(
+        candidate,
+        opponents_pool,
+        num_players,
+        game_seed,
+        seat,
+        case_index,
+        seed,
+    )
+    state, first_bankrupt_id, _ = play_game(params_by_seat, num_players, game_seed, max_steps)
+    score = score_player(state, seat, first_bankrupt_id)
+    win = 1 if state.winner_id == seat else 0
+    net_worth = _net_worth(state, seat)
+    return cand_index, score, win, net_worth
+
+
+def evaluate_candidates(
+    candidates: Sequence[BotParams],
     seeds: Sequence[int],
     num_players: int,
     max_steps: int,
     opponents_pool: Sequence[BotParams],
     cand_seats: str,
     seed: int,
-) -> float:
+    workers: int,
+    cache: dict[str, EvalResult],
+    cache_path: Path | None = None,
+) -> tuple[list[EvalResult], int]:
     cases = build_eval_cases(seeds, num_players, cand_seats, seed)
-    scores: list[float] = []
-    for idx, (game_seed, seat) in enumerate(cases):
-        rng = random.Random(seed + game_seed * 1013 + seat * 917 + idx * 37)
-        opponents = _select_opponents(rng, opponents_pool, num_players - 1)
-        params_by_seat: list[BotParams] = []
-        opp_iter = iter(opponents)
-        for seat_idx in range(num_players):
-            if seat_idx == seat:
-                params_by_seat.append(candidate)
-            else:
-                params_by_seat.append(next(opp_iter))
-        state, first_bankrupt_id, _ = play_game(params_by_seat, num_players, game_seed, max_steps)
-        scores.append(score_player(state, seat, first_bankrupt_id))
-    return sum(scores) / len(scores)
+    eval_config = {
+        "players": num_players,
+        "max_steps": max_steps,
+        "cand_seats": cand_seats,
+        "seed": seed,
+    }
+    seeds_hash = _hash_seeds(seeds)
+    opponents_hash = _hash_params_list(opponents_pool)
+
+    results: list[EvalResult | None] = [None] * len(candidates)
+    cache_hits = 0
+    tasks: list[tuple[
+        int,
+        BotParams,
+        int,
+        int,
+        int,
+        int,
+        int,
+        list[BotParams],
+        int,
+    ]] = []
+    keys: dict[int, str] = {}
+
+    for cand_index, candidate in enumerate(candidates):
+        key = _make_cache_key(candidate, eval_config, seeds_hash, opponents_hash)
+        cached = cache.get(key)
+        if cached is not None:
+            results[cand_index] = cached
+            cache_hits += 1
+            continue
+        keys[cand_index] = key
+        for case_index, (game_seed, seat) in enumerate(cases):
+            tasks.append(
+                (
+                    cand_index,
+                    candidate,
+                    game_seed,
+                    seat,
+                    case_index,
+                    num_players,
+                    max_steps,
+                    list(opponents_pool),
+                    seed,
+                )
+            )
+
+    if tasks:
+        if workers > 1:
+            ctx = get_context("spawn")
+            try:
+                with ctx.Pool(processes=workers) as pool:
+                    raw_results = pool.map(_eval_case, tasks)
+            except (OSError, PermissionError):
+                raw_results = [_eval_case(task) for task in tasks]
+        else:
+            raw_results = [_eval_case(task) for task in tasks]
+
+        sums: dict[int, dict[str, float]] = {
+            cand_index: {"score": 0.0, "wins": 0.0, "net": 0.0, "count": 0.0}
+            for cand_index in keys
+        }
+        for cand_index, score, win, net_worth in raw_results:
+            sums[cand_index]["score"] += score
+            sums[cand_index]["wins"] += win
+            sums[cand_index]["net"] += net_worth
+            sums[cand_index]["count"] += 1
+
+        for cand_index, key in keys.items():
+            count = int(sums[cand_index]["count"])
+            if count == 0:
+                raise RuntimeError("Пустая оценка кандидата")
+            fitness = sums[cand_index]["score"] / count
+            win_rate = sums[cand_index]["wins"] / count
+            avg_net = sums[cand_index]["net"] / count
+            result = EvalResult(fitness=fitness, win_rate=win_rate, avg_net_worth=avg_net)
+            results[cand_index] = result
+            cache[key] = result
+            if cache_path is not None:
+                cache_path.parent.mkdir(parents=True, exist_ok=True)
+                with cache_path.open("a", encoding="utf-8") as handle:
+                    payload = {
+                        "key": key,
+                        "fitness": result.fitness,
+                        "win_rate": result.win_rate,
+                        "avg_net_worth": result.avg_net_worth,
+                    }
+                    handle.write(json.dumps(payload, sort_keys=True))
+                    handle.write("\n")
+
+    if any(result is None for result in results):
+        raise RuntimeError("Не удалось получить оценку для всех кандидатов")
+    return [result for result in results], cache_hits
 
 
 def _sample_params(rng: random.Random, means: list[float], stds: list[float]) -> BotParams:
@@ -156,11 +341,6 @@ def _save_mean_std(path: Path, means: Sequence[float], stds: Sequence[float]) ->
         "std": [float(value) for value in stds],
     }
     path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
-
-
-def _eval_worker(args: tuple[BotParams, list[int], int, int, list[BotParams], str, int]) -> float:
-    candidate, seeds, num_players, max_steps, pool, cand_seats, seed = args
-    return evaluate_candidate(candidate, seeds, num_players, max_steps, pool, cand_seats, seed)
 
 
 def cem_train(
@@ -193,6 +373,8 @@ def cem_train(
 
     best_params = BotParams()
     best_score = float("-inf")
+    cache: dict[str, EvalResult] = {}
+    cache_path = checkpoint_dir / "eval_cache.jsonl"
 
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
     log_path = checkpoint_dir / "train_log.csv"
@@ -202,46 +384,29 @@ def cem_train(
         if write_header:
             writer.writerow([
                 "iter",
-                "best_score",
+                "best_fitness",
                 "mean_elite",
-                "params",
+                "std_elite",
+                "cache_hits",
+                "eval_seconds",
             ])
 
         for iteration in range(1, iters + 1):
             start = time.perf_counter()
             candidates = [_sample_params(rng, means, stds) for _ in range(population)]
-
-            if workers > 1:
-                ctx = get_context("spawn")
-                with ctx.Pool(processes=workers) as pool:
-                    scores = pool.map(
-                        _eval_worker,
-                        [
-                            (
-                                candidate,
-                                eval_seeds,
-                                num_players,
-                                max_steps,
-                                list(opponents_pool),
-                                cand_seats,
-                                seed,
-                            )
-                            for candidate in candidates
-                        ],
-                    )
-            else:
-                scores = [
-                    evaluate_candidate(
-                        candidate,
-                        eval_seeds,
-                        num_players,
-                        max_steps,
-                        opponents_pool,
-                        cand_seats,
-                        seed,
-                    )
-                    for candidate in candidates
-                ]
+            eval_results, cache_hits = evaluate_candidates(
+                candidates=candidates,
+                seeds=eval_seeds,
+                num_players=num_players,
+                max_steps=max_steps,
+                opponents_pool=opponents_pool,
+                cand_seats=cand_seats,
+                seed=seed,
+                workers=workers,
+                cache=cache,
+                cache_path=cache_path,
+            )
+            scores = [result.fitness for result in eval_results]
 
             ranked = list(zip(candidates, scores))
             ranked.sort(key=lambda item: item[1], reverse=True)
@@ -262,10 +427,18 @@ def cem_train(
 
             elapsed = time.perf_counter() - start
             elite_mean = sum(elite_scores) / len(elite_scores)
-            writer.writerow([iteration, best_score, elite_mean, json.dumps(best_params.to_dict())])
+            elite_std = pstdev(elite_scores) if len(elite_scores) > 1 else 0.0
+            writer.writerow([
+                iteration,
+                best_score,
+                elite_mean,
+                elite_std,
+                cache_hits,
+                f"{elapsed:.4f}",
+            ])
             print(
                 f"iter {iteration:02d} | best {best_score:.4f} | mean(top) {elite_mean:.4f} | "
-                f"{elapsed:.2f}s"
+                f"std(top) {elite_std:.4f} | cache {cache_hits} | {elapsed:.2f}s"
             )
 
             if checkpoint_every > 0 and iteration % checkpoint_every == 0:
@@ -329,7 +502,49 @@ def main(argv: list[str] | None = None) -> None:
         workers=args.workers,
     )
     print(f"Лучшие параметры сохранены в {args.out}")
-    print(params.to_dict())
+    baseline = load_params(args.baseline)
+    league = load_league(args.league_dir)
+    opponents_pool = build_opponent_pool(args.opponents, baseline, league)
+    eval_results, _ = evaluate_candidates(
+        candidates=[params],
+        seeds=[args.seed + idx for idx in range(args.games_per_cand)],
+        num_players=args.players,
+        max_steps=args.max_steps,
+        opponents_pool=opponents_pool,
+        cand_seats=args.cand_seats,
+        seed=args.seed,
+        workers=1,
+        cache={},
+        cache_path=None,
+    )
+    best_fitness = eval_results[0].fitness
+    print(f"Best fitness: {best_fitness:.4f}")
+    quick_cases = build_eval_cases(
+        seeds=[args.seed + idx for idx in range(20)],
+        num_players=args.players,
+        cand_seats=args.cand_seats,
+        seed=args.seed,
+    )
+    wins = 0
+    scores: list[float] = []
+    net_worths: list[int] = []
+    for idx, (game_seed, seat) in enumerate(quick_cases):
+        params_by_seat = _build_params_by_seat(
+            params,
+            [baseline],
+            args.players,
+            game_seed,
+            seat,
+            idx,
+            args.seed,
+        )
+        state, first_bankrupt_id, _ = play_game(params_by_seat, args.players, game_seed, args.max_steps)
+        if state.winner_id == seat:
+            wins += 1
+        scores.append(score_player(state, seat, first_bankrupt_id))
+        net_worths.append(_net_worth(state, seat))
+    win_rate = wins / max(1, len(quick_cases))
+    print(f"Quick bench vs baseline (20 игр): win_rate={win_rate:.3f}, avg_net_worth={mean(net_worths):.1f}")
 
 
 if __name__ == "__main__":
