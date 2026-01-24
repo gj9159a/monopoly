@@ -13,5 +13,4 @@ __pycache__/
 .coverage
 htmlcov/
 runs/*
-!runs/seeds.txt
 .DS_Store

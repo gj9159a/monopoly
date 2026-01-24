@@ -117,7 +117,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--keep", type=int, default=5)
     parser.add_argument("--min-games", type=int, default=50)
     parser.add_argument("--delta", type=float, default=0.05)
-    default_seeds = Path("runs/seeds.txt")
+    default_seeds = Path("monopoly/data/seeds.txt")
     parser.add_argument("--seeds-file", type=Path, default=default_seeds if default_seeds.exists() else None)
     return parser
 
