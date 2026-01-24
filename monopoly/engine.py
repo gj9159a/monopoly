@@ -314,10 +314,10 @@ class Engine:
             events.extend(self._send_to_jail(player, turn_index, reason="клетка 'В тюрьму'"))
             return events
         if cell.cell_type == "chance":
-            events.extend(self._draw_card("chance", player, turn_index))
+            events.extend(self._draw_card("chance", player, turn_index, dice_total))
             return events
         if cell.cell_type == "community":
-            events.extend(self._draw_card("community", player, turn_index))
+            events.extend(self._draw_card("community", player, turn_index, dice_total))
             return events
         if cell.cell_type == "tax":
             amount = cell.tax_amount or 0
@@ -362,7 +362,9 @@ class Engine:
                 )
         return events
 
-    def _draw_card(self, deck_name: str, player: Player, turn_index: int) -> list[Event]:
+    def _draw_card(
+        self, deck_name: str, player: Player, turn_index: int, dice_total: int | None = None
+    ) -> list[Event]:
         card = self._draw_from_deck(deck_name)
         events: list[Event] = [
             Event(
@@ -373,7 +375,7 @@ class Engine:
                 payload={"deck": deck_name, "card_id": card.card_id, "text_ru": card.text_ru},
             )
         ]
-        events.extend(self._apply_card_effect(card, player, turn_index))
+        events.extend(self._apply_card_effect(card, player, turn_index, dice_total))
         return events
 
     def _draw_from_deck(self, deck_name: str) -> Card:
@@ -388,7 +390,9 @@ class Engine:
             self.state.rng.shuffle(deck.draw_pile)
         return deck.draw_pile.pop(0)
 
-    def _apply_card_effect(self, card: Card, player: Player, turn_index: int) -> list[Event]:
+    def _apply_card_effect(
+        self, card: Card, player: Player, turn_index: int, dice_total: int | None = None
+    ) -> list[Event]:
         effect = card.effect
         effect_type = str(effect.get("type"))
         events: list[Event] = []
@@ -398,7 +402,7 @@ class Engine:
             "effect_type": effect_type,
         }
 
-        if effect_type == "money":
+        if effect_type in {"money", "pay_bank", "receive_bank"}:
             amount = int(effect.get("amount", 0))
             payload["amount"] = amount
             if amount >= 0:
@@ -484,6 +488,12 @@ class Engine:
 
         elif effect_type == "move_to":
             target = int(effect.get("cell_index", 0))
+            pass_go_raw = effect.get("pass_go", "auto")
+            pass_go = None
+            if isinstance(pass_go_raw, bool):
+                pass_go = pass_go_raw
+            elif isinstance(pass_go_raw, str) and pass_go_raw.lower() not in {"auto", ""}:
+                pass_go = pass_go_raw.lower() in {"1", "true", "yes", "y"}
             payload["cell_index"] = target
             events.append(
                 Event(
@@ -494,7 +504,7 @@ class Engine:
                     payload=payload,
                 )
             )
-            cell, move_events = self._move_player(player, (target - player.position) % len(self.state.board), turn_index)
+            cell, move_events = self._move_player_to(player, target, turn_index, pass_go)
             events.extend(move_events)
             events.extend(self._handle_landing(player, cell, turn_index, None))
 
@@ -540,9 +550,12 @@ class Engine:
 
         elif effect_type == "move_to_next":
             kind = str(effect.get("kind", ""))
+            rent_mode = effect.get("rent_mode")
+            auction_if_unowned = effect.get("auction_if_unowned", True)
             target = self._find_next_cell_index(player.position, kind)
             payload["kind"] = kind
             payload["cell_index"] = target
+            payload["rent_mode"] = str(rent_mode) if rent_mode is not None else None
             events.append(
                 Event(
                     type="CARD_EFFECT",
@@ -552,11 +565,70 @@ class Engine:
                     payload=payload,
                 )
             )
-            cell, move_events = self._move_player(
-                player, (target - player.position) % len(self.state.board), turn_index
-            )
+            cell, move_events = self._move_player_to(player, target, turn_index, True)
             events.extend(move_events)
-            events.extend(self._handle_landing(player, cell, turn_index, None))
+            if cell.owner_id is None:
+                if auction_if_unowned and self.state.rules.hr1_always_auction:
+                    events.extend(self._run_auction(cell, turn_index))
+            elif cell.owner_id != player.player_id:
+                owner = self.state.players[cell.owner_id]
+                rent, rent_events, reason = self._special_rent_amount(
+                    player, cell, owner, rent_mode, dice_total, turn_index
+                )
+                events.extend(rent_events)
+                events.extend(
+                    self._process_payment(
+                        player=player,
+                        amount=rent,
+                        creditor_id=owner.player_id,
+                        turn_index=turn_index,
+                        reason="рента",
+                        event_type="PAY_RENT",
+                        message=f"{player.name} заплатил ренту {rent} владельцу {owner.name}{reason}",
+                        cell_index=cell.index,
+                    )
+                )
+
+        elif effect_type == "repairs":
+            per_house = int(effect.get("per_house", 0))
+            per_hotel = int(effect.get("per_hotel", 0))
+            houses = sum(
+                cell.houses
+                for cell in self.state.board
+                if cell.owner_id == player.player_id
+            )
+            hotels = sum(
+                cell.hotels
+                for cell in self.state.board
+                if cell.owner_id == player.player_id
+            )
+            amount = houses * per_house + hotels * per_hotel
+            payload["per_house"] = per_house
+            payload["per_hotel"] = per_hotel
+            payload["amount"] = amount
+            events.append(
+                Event(
+                    type="CARD_EFFECT",
+                    turn_index=turn_index,
+                    player_id=player.player_id,
+                    msg_ru=f"{player.name} платит за ремонт {amount}",
+                    payload=payload,
+                )
+            )
+            if amount > 0:
+                events.extend(
+                    self._process_payment(
+                        player=player,
+                        amount=amount,
+                        creditor_id=None,
+                        turn_index=turn_index,
+                        reason="ремонт",
+                        event_type="CARD_EFFECT",
+                        message=f"{player.name} платит {amount} за ремонт",
+                        cell_index=None,
+                        extra_payload=payload,
+                    )
+                )
 
         else:
             events.append(
@@ -573,6 +645,84 @@ class Engine:
         if effect_type != "get_out_of_jail":
             self.state.decks[card.deck].discard.append(card)
         return events
+
+    def _move_player_to(
+        self, player: Player, target: int, turn_index: int, pass_go: bool | None
+    ) -> tuple[Cell, list[Event]]:
+        state = self.state
+        events: list[Event] = []
+        old_pos = player.position
+        new_pos = int(target) % len(state.board)
+        wrapped = new_pos < old_pos
+        should_collect = pass_go is True or (pass_go is None and wrapped)
+        if wrapped and should_collect:
+            player.money += state.rules.go_salary
+            events.append(
+                Event(
+                    type="PASS_GO",
+                    turn_index=turn_index,
+                    player_id=player.player_id,
+                    msg_ru=f"{player.name} получил {state.rules.go_salary} за проход 'Старт'",
+                    payload={"amount": state.rules.go_salary},
+                )
+            )
+        player.position = new_pos
+        steps = (new_pos - old_pos) % len(state.board)
+        events.append(
+            Event(
+                type="MOVE",
+                turn_index=turn_index,
+                player_id=player.player_id,
+                msg_ru=f"{player.name} переместился на {new_pos}",
+                payload={"from": old_pos, "to": new_pos, "steps": steps},
+            )
+        )
+        cell = state.board[new_pos]
+        events.append(
+            Event(
+                type="LAND",
+                turn_index=turn_index,
+                player_id=player.player_id,
+                msg_ru=f"{player.name} попал на '{cell.name}'",
+                payload={"cell_index": cell.index, "cell_type": cell.cell_type},
+            )
+        )
+        return cell, events
+
+    def _special_rent_amount(
+        self,
+        player: Player,
+        cell: Cell,
+        owner: Player,
+        rent_mode: str | None,
+        dice_total: int | None,
+        turn_index: int,
+    ) -> tuple[int, list[Event], str]:
+        events: list[Event] = []
+        reason = ""
+        if cell.mortgaged:
+            return 0, events, " (ипотека)"
+        if self.state.rules.hr2_no_rent_in_jail and owner.in_jail:
+            return 0, events, " (владелец в тюрьме)"
+        rent = self._calculate_rent(cell, owner.player_id, dice_total)
+        if rent_mode == "double" and cell.cell_type == "railroad":
+            rent *= 2
+        elif rent_mode == "utility_10x" and cell.cell_type == "utility":
+            total = dice_total
+            if total is None:
+                die1, die2 = _roll_dice(self.state.rng)
+                total = die1 + die2
+                events.append(
+                    Event(
+                        type="CARD_DICE_ROLL",
+                        turn_index=turn_index,
+                        player_id=player.player_id,
+                        msg_ru=f"Бросок по карте: {die1} и {die2}",
+                        payload={"dice": [die1, die2], "total": total},
+                    )
+                )
+            rent = int(total * 10)
+        return int(rent), events, reason
 
     def _use_get_out_of_jail_card(self, player: Player, turn_index: int) -> list[Event]:
         if not player.get_out_of_jail_cards:

@@ -110,6 +110,7 @@ def load_cards(path: Path, deck: str) -> list[Card]:
     data = _load_yaml(path)
     if not isinstance(data, list):
         raise ValueError(f"{path.name} должен содержать список карточек")
+    overrides = _load_card_text_overrides(path.parent / "cards_texts_ru_official.yaml")
     cards: list[Card] = []
     for idx, raw in enumerate(data):
         if not isinstance(raw, dict):
@@ -121,6 +122,8 @@ def load_cards(path: Path, deck: str) -> list[Card]:
             raise ValueError(f"Карточка {idx} должна иметь id и text_ru")
         if not isinstance(effect, dict) or "type" not in effect:
             raise ValueError(f"Карточка {idx} должна иметь effect с type")
+        if str(card_id) in overrides:
+            text_ru = overrides[str(card_id)]
         cards.append(
             Card(
                 card_id=str(card_id),
@@ -132,6 +135,20 @@ def load_cards(path: Path, deck: str) -> list[Card]:
     if not cards:
         raise ValueError(f"{path.name} должен содержать хотя бы одну карточку")
     return cards
+
+
+def _load_card_text_overrides(path: Path) -> dict[str, str]:
+    if not path.exists():
+        return {}
+    data = _load_yaml(path)
+    if not isinstance(data, dict):
+        raise ValueError("cards_texts_ru_official.yaml должен содержать словарь id -> text_ru")
+    result: dict[str, str] = {}
+    for key, value in data.items():
+        if key is None or value is None:
+            continue
+        result[str(key)] = str(value)
+    return result
 
 
 def _validate_cell(cell: Cell) -> None:

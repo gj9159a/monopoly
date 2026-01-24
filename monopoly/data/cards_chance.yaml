@@ -1,33 +1,90 @@
-- id: "chance_money_plus"
-  text_ru: "Пример: получите 50"
-  effect:
-    type: "money"
-    amount: 50
-- id: "chance_money_minus"
-  text_ru: "Пример: заплатите 50"
-  effect:
-    type: "money"
-    amount: -50
-- id: "chance_move_to_start"
-  text_ru: "Пример: перейдите на Старт"
+- id: "chance_advance_go"
+  text_ru: "Перейдите на Вперед и получите 200."
   effect:
     type: "move_to"
     cell_index: 0
-- id: "chance_move_next_rail"
-  text_ru: "Пример: перейдите на следующий вокзал"
+    pass_go: true
+- id: "chance_advance_illinois"
+  text_ru: "Перейдите на Площадь Маяковского. Если проходите Вперед - получите 200."
+  effect:
+    type: "move_to"
+    cell_index: 24
+    pass_go: true
+- id: "chance_advance_st_charles"
+  text_ru: "Перейдите на Улицу Полянка. Если проходите Вперед - получите 200."
+  effect:
+    type: "move_to"
+    cell_index: 11
+    pass_go: true
+- id: "chance_advance_nearest_utility"
+  text_ru: "Перейдите на ближайшую коммунальную службу. Если она принадлежит - заплатите 10x последнего броска; если свободна - аукцион."
+  effect:
+    type: "move_to_next"
+    kind: "utility"
+    rent_mode: "utility_10x"
+    auction_if_unowned: true
+- id: "chance_advance_nearest_railroad_1"
+  text_ru: "Перейдите на ближайшую железную дорогу. Если принадлежит - заплатите двойную ренту; если свободна - аукцион."
   effect:
     type: "move_to_next"
     kind: "railroad"
-- id: "chance_go_to_jail"
-  text_ru: "Пример: отправляйтесь в тюрьму"
+    rent_mode: "double"
+    auction_if_unowned: true
+- id: "chance_advance_nearest_railroad_2"
+  text_ru: "Перейдите на ближайшую железную дорогу. Если принадлежит - заплатите двойную ренту; если свободна - аукцион."
   effect:
-    type: "go_to_jail"
+    type: "move_to_next"
+    kind: "railroad"
+    rent_mode: "double"
+    auction_if_unowned: true
+- id: "chance_bank_dividend"
+  text_ru: "Банк выплачивает вам дивиденды 50."
+  effect:
+    type: "money"
+    amount: 50
 - id: "chance_get_out_of_jail"
-  text_ru: "Пример: карта выхода из тюрьмы"
+  text_ru: "Карта выхода из тюрьмы. Сохраните до использования."
   effect:
     type: "get_out_of_jail"
-- id: "chance_move_back"
-  text_ru: "Пример: вернитесь на 3 клетки"
+- id: "chance_go_back_three"
+  text_ru: "Вернитесь на 3 клетки назад."
   effect:
     type: "move_relative"
     steps: -3
+- id: "chance_go_to_jail"
+  text_ru: "Отправляйтесь в тюрьму."
+  effect:
+    type: "go_to_jail"
+- id: "chance_general_repairs"
+  text_ru: "Ремонт улиц: заплатите 25 за дом и 100 за отель."
+  effect:
+    type: "repairs"
+    per_house: 25
+    per_hotel: 100
+- id: "chance_poor_tax"
+  text_ru: "Уплатите налог 15."
+  effect:
+    type: "money"
+    amount: -15
+- id: "chance_take_reading"
+  text_ru: "Отправляйтесь на Рижскую железную дорогу. Если проходите Вперед - получите 200."
+  effect:
+    type: "move_to"
+    cell_index: 5
+    pass_go: true
+- id: "chance_take_boardwalk"
+  text_ru: "Перейдите на Улицу Арбат."
+  effect:
+    type: "move_to"
+    cell_index: 39
+    pass_go: true
+- id: "chance_building_loan"
+  text_ru: "Ваш строительный заем созрел. Получите 150."
+  effect:
+    type: "money"
+    amount: 150
+- id: "chance_chairman"
+  text_ru: "Вы избраны председателем совета. Заплатите каждому игроку по 50."
+  effect:
+    type: "pay_each"
+    amount: 50

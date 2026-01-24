@@ -1,19 +1,80 @@
-- id: "community_receive_each"
-  text_ru: "Пример: получите по 10 от каждого"
+- id: "community_advance_go"
+  text_ru: "Перейдите на Вперед и получите 200."
+  effect:
+    type: "move_to"
+    cell_index: 0
+    pass_go: true
+- id: "community_bank_error"
+  text_ru: "Ошибка банка в вашу пользу. Получите 200."
+  effect:
+    type: "money"
+    amount: 200
+- id: "community_doctors_fee"
+  text_ru: "Оплатите услуги врача 50."
+  effect:
+    type: "money"
+    amount: -50
+- id: "community_sale_stock"
+  text_ru: "Продажа акций. Получите 50."
+  effect:
+    type: "money"
+    amount: 50
+- id: "community_get_out_of_jail"
+  text_ru: "Карта выхода из тюрьмы. Сохраните до использования."
+  effect:
+    type: "get_out_of_jail"
+- id: "community_go_to_jail"
+  text_ru: "Отправляйтесь в тюрьму."
+  effect:
+    type: "go_to_jail"
+- id: "community_birthday"
+  text_ru: "День рождения. Получите по 10 от каждого игрока."
   effect:
     type: "receive_from_each"
     amount: 10
-- id: "community_pay_each"
-  text_ru: "Пример: заплатите каждому по 25"
-  effect:
-    type: "pay_each"
-    amount: 25
-- id: "community_money_plus"
-  text_ru: "Пример: получите 100"
+- id: "community_holiday_fund"
+  text_ru: "Праздничный фонд. Получите 100."
   effect:
     type: "money"
     amount: 100
-- id: "community_move_to_jail"
-  text_ru: "Пример: отправляйтесь в тюрьму"
+- id: "community_income_tax_refund"
+  text_ru: "Возврат налога. Получите 20."
   effect:
-    type: "go_to_jail"
+    type: "money"
+    amount: 20
+- id: "community_life_insurance"
+  text_ru: "Страхование жизни. Получите 100."
+  effect:
+    type: "money"
+    amount: 100
+- id: "community_hospital_fee"
+  text_ru: "Оплатите больницу 100."
+  effect:
+    type: "money"
+    amount: -100
+- id: "community_school_fee"
+  text_ru: "Оплатите обучение 50."
+  effect:
+    type: "money"
+    amount: -50
+- id: "community_consultancy_fee"
+  text_ru: "Консультационный гонорар. Получите 25."
+  effect:
+    type: "money"
+    amount: 25
+- id: "community_street_repairs"
+  text_ru: "Ремонт улиц: заплатите 40 за дом и 115 за отель."
+  effect:
+    type: "repairs"
+    per_house: 40
+    per_hotel: 115
+- id: "community_beauty_contest"
+  text_ru: "Премия на конкурсе. Получите 10."
+  effect:
+    type: "money"
+    amount: 10
+- id: "community_inherit"
+  text_ru: "Наследство. Получите 100."
+  effect:
+    type: "money"
+    amount: 100
