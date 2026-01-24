@@ -1,0 +1,14 @@
+{
+  "auction_value_mult_rail": 1.1,
+  "auction_value_mult_street": 1.0,
+  "auction_value_mult_utility": 0.9,
+  "build_aggressiveness": 1.0,
+  "cash_buffer_base": 150,
+  "cash_buffer_per_house": 20,
+  "jail_exit_aggressiveness": 0.6,
+  "max_bid_fraction": 0.9,
+  "monopoly_block_bonus": 0.3,
+  "monopoly_completion_bonus": 0.6,
+  "risk_aversion": 0.5,
+  "un_mortgage_priority_mult": 1.1
+}
