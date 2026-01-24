@@ -6,6 +6,7 @@ readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
   "streamlit>=1.30",
+  "matplotlib>=3.8",
   "pyyaml>=6.0",
 ]
 

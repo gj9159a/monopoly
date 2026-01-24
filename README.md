@@ -88,6 +88,38 @@ python -m monopoly.train --workers 4 ...
 python -m monopoly.sim --params trained_params.json --players 6 --seed 42 --games 1
 ```
 
+## Autotrain (до плато) + UI
+
+В Streamlit доступны режимы **Тренировка** и **Live матч**. Тренировка запускается в фоне, прогресс берётся из `runs/<timestamp>/status.json`, лог — из `train_log.csv` и `progress.txt`.
+
+CLI-запуск автотренинга:
+
+```bash
+python -m monopoly.autotrain run --profile deep --workers auto
+```
+
+Параметры остановки по плато:
+- `--epoch-iters` (по умолчанию 10)
+- `--plateau-epochs` (по умолчанию 5)
+- `--eps-winrate` (по умолчанию 0.01)
+- `--eps-fitness` (по умолчанию 0.02)
+- `--min-progress-games` (по умолчанию 200)
+- `--delta` (по умолчанию 0.05)
+- `--max-hours` — опциональный предохранитель (по умолчанию нет лимита)
+
+Содержимое `runs/<timestamp>/`:
+- `status.json` — текущий статус (epoch, best win-rate, plateau и т.п.)
+- `train_log.csv` — история по эпохам
+- `progress.txt` — человекочитаемый лог
+- `best.json` — лучшие параметры
+- `last_bench.json` — последний бенчмарк
+
+Live матч (6 “deep planner” ботов, запись состояния для UI):
+
+```bash
+python -m monopoly.live --players 6 --params runs/<timestamp>/best.json --mode deep --workers auto --time-per-decision-sec 3.0 --horizon-turns 60 --seed 42 --out runs/<timestamp>/live_state.json
+```
+
 ## Бенчмарк параметров
 
 ```bash
