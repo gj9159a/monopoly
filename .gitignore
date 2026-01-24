@@ -1,5 +1,7 @@
 .pytest_tmp/
 .pip_tmp/
+.pip_tmp_ok/
+.tmp/
 __pycache__/
 *.py[cod]
 .pytest_cache/

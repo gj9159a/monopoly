@@ -15,6 +15,7 @@ from typing import Iterable, Sequence
 
 from .engine import create_engine
 from .models import GameState
+from .league import add_to_league
 from .params import BotParams, PARAM_SPECS, load_params, params_to_vector, save_params, vector_to_params
 
 
@@ -81,6 +82,17 @@ def _make_cache_key(
         "opponents": opponents_pool_hash,
     }
     return _hash_text(json.dumps(payload, sort_keys=True))
+
+
+def _parse_bool(value: str | None) -> bool:
+    if value is None:
+        return False
+    normalized = value.strip().lower()
+    if normalized in {"1", "true", "yes", "y", "on"}:
+        return True
+    if normalized in {"0", "false", "no", "n", "off"}:
+        return False
+    raise ValueError(f"Некорректное значение bool: {value}")
 
 
 def play_game(
@@ -468,6 +480,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--checkpoint-dir", type=Path, default=None)
     parser.add_argument("--checkpoint-every", type=int, default=5)
     parser.add_argument("--workers", type=int, default=1)
+    parser.add_argument("--league-auto-add", type=_parse_bool, default=False)
     return parser
 
 
@@ -544,7 +557,24 @@ def main(argv: list[str] | None = None) -> None:
         scores.append(score_player(state, seat, first_bankrupt_id))
         net_worths.append(_net_worth(state, seat))
     win_rate = wins / max(1, len(quick_cases))
-    print(f"Quick bench vs baseline (20 игр): win_rate={win_rate:.3f}, avg_net_worth={mean(net_worths):.1f}")
+    avg_net = mean(net_worths) if net_worths else 0.0
+    print(f"Quick bench vs baseline (20 игр): win_rate={win_rate:.3f}, avg_net_worth={avg_net:.1f}")
+
+    if args.league_auto_add:
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M")
+        name = f"best_{timestamp}"
+        meta = (
+            f"iter={args.iters}; best_fitness={best_fitness:.4f}; "
+            f"baseline_bench=win_rate:{win_rate:.3f},net:{avg_net:.1f}"
+        )
+        entry = add_to_league(
+            params_path=args.out,
+            name=name,
+            meta=meta,
+            fitness=best_fitness,
+            league_dir=args.league_dir,
+        )
+        print(f"League auto-add: {entry['name']} -> {entry['path']}")
 
 
 if __name__ == "__main__":

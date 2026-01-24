@@ -24,6 +24,31 @@ def _win_rate_ci(wins: int, games: int, z: float = 1.96) -> tuple[float, float]:
     return max(0.0, p - margin), min(1.0, p + margin)
 
 
+def _mean_ci(sum_value: float, sum_sq: float, n: int, z: float = 1.96) -> tuple[float, float]:
+    if n <= 1:
+        return sum_value, sum_value
+    mean_value = sum_value / n
+    variance = max(0.0, (sum_sq - n * mean_value * mean_value) / (n - 1))
+    margin = z * (variance ** 0.5) / (n ** 0.5)
+    return mean_value - margin, mean_value + margin
+
+
+def load_seed_pack(seeds_file: Path | None, seed: int, games: int) -> list[int]:
+    if seeds_file is not None:
+        if not seeds_file.exists():
+            raise FileNotFoundError(f"Файл с сид-списком не найден: {seeds_file}")
+        seeds: list[int] = []
+        for line in seeds_file.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            seeds.append(int(line))
+        if not seeds:
+            raise ValueError("Пустой список сидов")
+        return seeds[:games] if games > 0 else seeds
+    return [seed + idx for idx in range(games)]
+
+
 def bench(
     candidate: BotParams,
     baseline: BotParams,
@@ -36,15 +61,21 @@ def bench(
     cand_seats: str,
     min_games: int,
     delta: float,
+    seeds_file: Path | None = None,
+    opponents_pool: list[BotParams] | None = None,
 ) -> dict[str, float | str]:
-    league = load_league(league_dir)
-    pool = build_opponent_pool(opponents, baseline, league)
-    seeds = [seed + idx for idx in range(games)]
+    if opponents_pool is None:
+        league = load_league(league_dir)
+        pool = build_opponent_pool(opponents, baseline, league)
+    else:
+        pool = list(opponents_pool)
+    seeds = load_seed_pack(seeds_file, seed, games)
     cases = build_eval_cases(seeds, num_players, cand_seats, seed)
 
     wins = 0
     scores: list[float] = []
-    net_worths: list[int] = []
+    net_sum = 0.0
+    net_sum_sq = 0.0
     steps_list: list[int] = []
     stop_reason = "full"
 
@@ -63,10 +94,13 @@ def bench(
         if state.winner_id == seat:
             wins += 1
         scores.append(score_player(state, seat, first_bankrupt_id))
-        net_worths.append(_net_worth(state, seat))
+        net_worth = _net_worth(state, seat)
+        net_sum += net_worth
+        net_sum_sq += net_worth * net_worth
         steps_list.append(steps)
         games_played = len(scores)
-        if games_played >= min_games:
+        min_required = min(min_games, len(cases))
+        if games_played >= min_required:
             ci_low, ci_high = _win_rate_ci(wins, games_played)
             if ci_low >= 0.5 + delta:
                 stop_reason = "above"
@@ -78,13 +112,16 @@ def bench(
     games_played = len(scores)
     win_rate = wins / max(1, games_played)
     ci_low, ci_high = _win_rate_ci(wins, games_played)
+    net_ci_low, net_ci_high = _mean_ci(net_sum, net_sum_sq, games_played)
     return {
         "games": float(games_played),
         "win_rate": win_rate,
         "ci_low": ci_low,
         "ci_high": ci_high,
         "avg_score": mean(scores) if scores else 0.0,
-        "avg_net_worth": mean(net_worths) if net_worths else 0.0,
+        "avg_net_worth": net_sum / games_played if games_played else 0.0,
+        "net_worth_ci_low": net_ci_low,
+        "net_worth_ci_high": net_ci_high,
         "avg_steps": mean(steps_list) if steps_list else 0.0,
         "stop_reason": stop_reason,
     }
@@ -98,6 +135,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--max-steps", type=int, default=2000)
     parser.add_argument("--min-games", type=int, default=50)
     parser.add_argument("--delta", type=float, default=0.05)
+    parser.add_argument("--seeds-file", type=Path, default=None)
     parser.add_argument("--candidate", type=Path, required=True)
     parser.add_argument("--baseline", type=Path, default=Path("monopoly/data/params_baseline.json"))
     parser.add_argument("--league-dir", type=Path, default=Path("monopoly/data/league"))
@@ -127,6 +165,7 @@ def main(argv: list[str] | None = None) -> None:
         cand_seats=args.cand_seats,
         min_games=args.min_games,
         delta=args.delta,
+        seeds_file=args.seeds_file,
     )
 
     games = int(result["games"])
@@ -135,6 +174,7 @@ def main(argv: list[str] | None = None) -> None:
     print(f"95% CI: [{result['ci_low']:.3f}, {result['ci_high']:.3f}]")
     print(f"Avg score: {result['avg_score']:.4f}")
     print(f"Avg net worth: {result['avg_net_worth']:.1f}")
+    print(f"Net worth CI: [{result['net_worth_ci_low']:.1f}, {result['net_worth_ci_high']:.1f}]")
     print(f"Avg steps: {result['avg_steps']:.1f}")
     if result["stop_reason"] != "full":
         print(f"Early stop: {result['stop_reason']}")

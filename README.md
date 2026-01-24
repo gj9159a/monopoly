@@ -94,6 +94,44 @@ python -m monopoly.sim --params trained_params.json --players 6 --seed 42 --game
 python -m monopoly.bench --games 200 --players 6 --seed 123 --candidate trained_params.json --baseline monopoly/data/params_baseline.json --league-dir monopoly/data/league --opponents mixed
 ```
 
+Можно использовать фиксированный набор сидов:
+
+```bash
+python -m monopoly.bench --games 200 --seeds-file runs/seeds.txt --candidate trained_params.json --baseline monopoly/data/params_baseline.json --league-dir monopoly/data/league --opponents mixed
+```
+
+## Лига и прогресс
+
+Добавление лучшей конфигурации в лигу:
+
+```bash
+python -m monopoly.league add --params trained_params.json --name best_YYYYMMDD_HHMM --meta "iter=50; fitness=..." --fitness 0.123
+```
+
+Список лиги и очистка старых:
+
+```bash
+python -m monopoly.league list
+python -m monopoly.league prune --keep 20
+```
+
+Оценка прогресса (последние 5 из лиги vs baseline и mix):
+
+```bash
+python -m monopoly.progress --league-dir monopoly/data/league --baseline monopoly/data/params_baseline.json --games 200 --seed 123
+```
+
+С фиксированным seed pack:
+
+```bash
+python -m monopoly.progress --league-dir monopoly/data/league --baseline monopoly/data/params_baseline.json --games 200 --seeds-file runs/seeds.txt
+```
+
+Рекомендуемый workflow:
+1) train (50 итераций)
+2) league auto-add
+3) progress (200 игр) — сравнить с baseline и последними из лиги
+
 ## Данные локализации и правил
 
 Файлы для редактирования:
