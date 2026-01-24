@@ -3,13 +3,14 @@ from __future__ import annotations
 import random
 from pathlib import Path
 
-from .bots import BaseBot, create_bots
+from .bots import Bot, create_bots
 from .data_loader import load_board, load_cards, load_rules
+from .params import BotParams
 from .models import Card, Cell, DeckState, Event, GameState, Player
 
 
 class Engine:
-    def __init__(self, state: GameState, bots: list[BaseBot]) -> None:
+    def __init__(self, state: GameState, bots: list[Bot]) -> None:
         if len(bots) != len(state.players):
             raise ValueError("Число ботов должно совпадать с числом игроков")
         self.state = state
@@ -896,7 +897,7 @@ class Engine:
             bot = self.bots[owner_id]
             prioritizer = getattr(bot, "prioritize_mortgage", None)
             if callable(prioritizer):
-                return prioritizer(candidates)
+                return prioritizer(candidates, self.state, self.state.players[owner_id])
         candidates.sort(key=lambda c: (c.price or 0, c.index))
         return candidates
 
@@ -1017,31 +1018,21 @@ class Engine:
         if player.bankrupt or self.state.game_over:
             return []
         bot = self.bots[player.player_id]
-        reserve = getattr(bot.profile, "reserve_cash", 100)
+        decision = bot.decide(
+            self.state,
+            {"type": "economy_phase", "player_id": player.player_id},
+        )
         events: list[Event] = []
-
-        mortgaged_cells = [
-            cell
-            for cell in self.state.board
-            if cell.owner_id == player.player_id and cell.mortgaged
-        ]
-        mortgaged_cells.sort(key=lambda c: (c.price or 0, c.index), reverse=True)
-        for cell in mortgaged_cells:
-            cost = self._unmortgage_cost(cell)
-            if player.money - cost < reserve:
+        for action in decision.get("actions", []):
+            action_type = action.get("action")
+            cell_index = action.get("cell_index")
+            if cell_index is None:
                 continue
-            events.extend(self._unmortgage_property(player, cell, turn_index))
-
-        while True:
-            candidates = self._build_candidates(player.player_id)
-            if not candidates:
-                break
-            cell = candidates[0]
-            cost = cell.house_cost or 0
-            if player.money - cost < reserve:
-                break
-            events.extend(self._build_on_property(player, cell, turn_index))
-
+            cell = self.state.board[int(cell_index)]
+            if action_type == "unmortgage":
+                events.extend(self._unmortgage_property(player, cell, turn_index))
+            elif action_type == "build":
+                events.extend(self._build_on_property(player, cell, turn_index))
         return events
 
     def _run_auction(self, cell: Cell, turn_index: int) -> list[Event]:
@@ -1192,10 +1183,13 @@ def create_game(num_players: int, seed: int, data_dir: Path | None = None) -> Ga
 
 
 def create_engine(
-    num_players: int, seed: int, data_dir: Path | None = None, bot_profiles: list[str] | None = None
+    num_players: int,
+    seed: int,
+    data_dir: Path | None = None,
+    bot_params: BotParams | list[BotParams] | None = None,
 ) -> Engine:
     state = create_game(num_players=num_players, seed=seed, data_dir=data_dir)
-    bots = create_bots(num_players, bot_profiles)
+    bots = create_bots(num_players, bot_params)
     return Engine(state, bots)
 
 

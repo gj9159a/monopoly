@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import streamlit as st
 
-from .bots import PROFILES
 from .engine import create_engine
 from .models import Cell, Event, GameState, Player
+from .params import BotParams, load_params
 
 
 def _perimeter_coords() -> list[tuple[int, int]]:
@@ -187,10 +187,10 @@ def main() -> None:
         st.header("Управление")
         num_players = st.slider("Число ботов", min_value=2, max_value=6, value=4, step=1)
         seed = st.number_input("Seed", min_value=0, max_value=999999, value=42, step=1)
-        profiles = st.multiselect(
-            "Профили ботов",
-            options=list(PROFILES.keys()),
-            default=["Aggressive", "Builder"],
+        params_path = st.text_input(
+            "Путь к параметрам бота (json/yaml)",
+            value="",
+            placeholder="trained_params.json",
         )
         new_game = st.button("Новая игра", type="primary")
         step_once = st.button("Шаг")
@@ -200,7 +200,13 @@ def main() -> None:
         st.button("Сброс")
 
     if "engine" not in st.session_state or new_game:
-        st.session_state.engine = create_engine(num_players, seed, bot_profiles=profiles)
+        bot_params = BotParams()
+        if params_path:
+            try:
+                bot_params = load_params(params_path)
+            except Exception as exc:
+                st.warning(f"Не удалось загрузить параметры: {exc}. Использую дефолтные.")
+        st.session_state.engine = create_engine(num_players, seed, bot_params=bot_params)
         st.session_state.run_info = ""
 
     if step_once or step_ten or step_hundred:
