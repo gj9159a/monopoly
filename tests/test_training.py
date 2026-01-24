@@ -1,17 +1,21 @@
 from __future__ import annotations
 
+import json
+import shutil
 import subprocess
 import sys
 from pathlib import Path
 from uuid import uuid4
-import shutil
 
 from monopoly.engine import create_engine
-from monopoly.params import BotParams, decide_build_actions
-from monopoly.train import cem_train
-
-
-
+from monopoly.params import BotParams, decide_build_actions, save_params
+from monopoly.train import (
+    build_eval_cases,
+    build_opponent_pool,
+    evaluate_candidate,
+    cem_train,
+    load_league,
+)
 
 
 def _cleanup_tmp(path: Path) -> None:
@@ -28,6 +32,11 @@ def _local_tmp() -> Path:
     path = base / uuid4().hex
     path.mkdir()
     return path
+
+
+def _write_params(path: Path, params: BotParams) -> None:
+    save_params(params, path)
+
 
 def test_params_roundtrip() -> None:
     params = BotParams(
@@ -52,38 +61,46 @@ def test_params_roundtrip() -> None:
     _cleanup_tmp(tmp_path)
 
 
-def test_cem_determinism() -> None:
+def test_eval_determinism() -> None:
     tmp_path = _local_tmp()
-    out_a = tmp_path / "a.json"
-    out_b = tmp_path / "b.json"
-    log_a = tmp_path / "a.csv"
-    log_b = tmp_path / "b.csv"
+    baseline = BotParams()
+    league_dir = tmp_path / "league"
+    league_dir.mkdir()
 
-    params_a = cem_train(
-        iters=2,
-        population=6,
-        elite=2,
-        games_per_candidate=2,
-        num_players=2,
-        seed=7,
-        max_steps=40,
-        out_path=out_a,
-        log_path=log_a,
-    )
-    params_b = cem_train(
-        iters=2,
-        population=6,
-        elite=2,
-        games_per_candidate=2,
-        num_players=2,
-        seed=7,
-        max_steps=40,
-        out_path=out_b,
-        log_path=log_b,
-    )
+    _write_params(tmp_path / "baseline.json", baseline)
+    _write_params(league_dir / "l1.json", baseline)
+    _write_params(league_dir / "l2.json", baseline)
 
-    assert params_a.to_dict() == params_b.to_dict()
+    opponents_pool = build_opponent_pool("mixed", baseline, load_league(league_dir))
+    seeds = [1, 2, 3]
+
+    score_a = evaluate_candidate(
+        candidate=baseline,
+        seeds=seeds,
+        num_players=2,
+        max_steps=30,
+        opponents_pool=opponents_pool,
+        cand_seats="rotate",
+        seed=7,
+    )
+    score_b = evaluate_candidate(
+        candidate=baseline,
+        seeds=seeds,
+        num_players=2,
+        max_steps=30,
+        opponents_pool=opponents_pool,
+        cand_seats="rotate",
+        seed=7,
+    )
+    assert score_a == score_b
     _cleanup_tmp(tmp_path)
+
+
+def test_league_rotation() -> None:
+    seeds = [10, 11, 12, 13, 14, 15]
+    cases = build_eval_cases(seeds, num_players=6, cand_seats="rotate", seed=123)
+    seats = {seat for _, seat in cases}
+    assert seats == set(range(6))
 
 
 def test_bot_constraints() -> None:
@@ -112,8 +129,15 @@ def test_bot_constraints() -> None:
 
 def test_train_cli_smoke() -> None:
     tmp_path = _local_tmp()
+    baseline_path = tmp_path / "baseline.json"
+    league_dir = tmp_path / "league"
+    league_dir.mkdir()
+    _write_params(baseline_path, BotParams())
+    _write_params(league_dir / "l1.json", BotParams())
+
     out_path = tmp_path / "trained.json"
-    log_path = tmp_path / "train_log.csv"
+    checkpoint_dir = tmp_path / "runs"
+
     result = subprocess.run(
         [
             sys.executable,
@@ -133,10 +157,20 @@ def test_train_cli_smoke() -> None:
             "1",
             "--max-steps",
             "20",
+            "--baseline",
+            str(baseline_path),
+            "--league-dir",
+            str(league_dir),
+            "--opponents",
+            "mixed",
+            "--cand-seats",
+            "rotate",
+            "--checkpoint-dir",
+            str(checkpoint_dir),
+            "--checkpoint-every",
+            "1",
             "--out",
             str(out_path),
-            "--log",
-            str(log_path),
         ],
         check=True,
         capture_output=True,
@@ -144,4 +178,103 @@ def test_train_cli_smoke() -> None:
     )
     assert result.returncode == 0
     assert out_path.exists()
+    assert (checkpoint_dir / "best_params.json").exists()
+    assert (checkpoint_dir / "mean_std.json").exists()
+    assert (checkpoint_dir / "train_log.csv").exists()
+    _cleanup_tmp(tmp_path)
+
+
+def test_cem_determinism() -> None:
+    tmp_path = _local_tmp()
+    baseline = BotParams()
+    baseline_path = tmp_path / "baseline.json"
+    league_dir = tmp_path / "league"
+    league_dir.mkdir()
+    _write_params(baseline_path, baseline)
+    _write_params(league_dir / "l1.json", baseline)
+
+    out_a = tmp_path / "a.json"
+    out_b = tmp_path / "b.json"
+    checkpoint_a = tmp_path / "run_a"
+    checkpoint_b = tmp_path / "run_b"
+
+    params_a = cem_train(
+        iters=2,
+        population=4,
+        elite=2,
+        games_per_candidate=2,
+        num_players=2,
+        seed=7,
+        max_steps=40,
+        opponents="mixed",
+        baseline_path=baseline_path,
+        league_dir=league_dir,
+        cand_seats="rotate",
+        out_path=out_a,
+        checkpoint_dir=checkpoint_a,
+        checkpoint_every=1,
+        workers=1,
+    )
+    params_b = cem_train(
+        iters=2,
+        population=4,
+        elite=2,
+        games_per_candidate=2,
+        num_players=2,
+        seed=7,
+        max_steps=40,
+        opponents="mixed",
+        baseline_path=baseline_path,
+        league_dir=league_dir,
+        cand_seats="rotate",
+        out_path=out_b,
+        checkpoint_dir=checkpoint_b,
+        checkpoint_every=1,
+        workers=1,
+    )
+
+    assert params_a.to_dict() == params_b.to_dict()
+    _cleanup_tmp(tmp_path)
+
+
+def test_bench_smoke() -> None:
+    tmp_path = _local_tmp()
+    baseline_path = tmp_path / "baseline.json"
+    candidate_path = tmp_path / "candidate.json"
+    league_dir = tmp_path / "league"
+    league_dir.mkdir()
+
+    _write_params(baseline_path, BotParams())
+    _write_params(candidate_path, BotParams())
+    _write_params(league_dir / "l1.json", BotParams())
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "monopoly.bench",
+            "--games",
+            "2",
+            "--players",
+            "2",
+            "--seed",
+            "1",
+            "--candidate",
+            str(candidate_path),
+            "--baseline",
+            str(baseline_path),
+            "--league-dir",
+            str(league_dir),
+            "--opponents",
+            "mixed",
+            "--cand-seats",
+            "rotate",
+            "--max-steps",
+            "20",
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0
     _cleanup_tmp(tmp_path)
