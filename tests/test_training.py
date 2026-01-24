@@ -12,7 +12,7 @@ from monopoly.params import BotParams, decide_build_actions, save_params
 from monopoly.train import (
     build_eval_cases,
     build_opponent_pool,
-    evaluate_candidate,
+    evaluate_candidates,
     cem_train,
     load_league,
 )
@@ -74,25 +74,29 @@ def test_eval_determinism() -> None:
     opponents_pool = build_opponent_pool("mixed", baseline, load_league(league_dir))
     seeds = [1, 2, 3]
 
-    score_a = evaluate_candidate(
-        candidate=baseline,
+    results_a, _ = evaluate_candidates(
+        candidates=[baseline],
         seeds=seeds,
         num_players=2,
         max_steps=30,
         opponents_pool=opponents_pool,
         cand_seats="rotate",
         seed=7,
+        workers=1,
+        cache={},
     )
-    score_b = evaluate_candidate(
-        candidate=baseline,
+    results_b, _ = evaluate_candidates(
+        candidates=[baseline],
         seeds=seeds,
         num_players=2,
         max_steps=30,
         opponents_pool=opponents_pool,
         cand_seats="rotate",
         seed=7,
+        workers=1,
+        cache={},
     )
-    assert score_a == score_b
+    assert results_a[0].fitness == results_b[0].fitness
     _cleanup_tmp(tmp_path)
 
 
@@ -181,6 +185,7 @@ def test_train_cli_smoke() -> None:
     assert (checkpoint_dir / "best_params.json").exists()
     assert (checkpoint_dir / "mean_std.json").exists()
     assert (checkpoint_dir / "train_log.csv").exists()
+    assert (checkpoint_dir / "eval_cache.jsonl").exists()
     _cleanup_tmp(tmp_path)
 
 
@@ -235,6 +240,47 @@ def test_cem_determinism() -> None:
 
     assert params_a.to_dict() == params_b.to_dict()
     _cleanup_tmp(tmp_path)
+
+
+def test_eval_workers_consistency() -> None:
+    baseline = BotParams()
+    seeds = [1, 2]
+    opponents_pool = [baseline]
+    results_seq, _ = evaluate_candidates(
+        candidates=[baseline],
+        seeds=seeds,
+        num_players=2,
+        max_steps=20,
+        opponents_pool=opponents_pool,
+        cand_seats="rotate",
+        seed=7,
+        workers=1,
+        cache={},
+    )
+    results_mp, _ = evaluate_candidates(
+        candidates=[baseline],
+        seeds=seeds,
+        num_players=2,
+        max_steps=20,
+        opponents_pool=opponents_pool,
+        cand_seats="rotate",
+        seed=7,
+        workers=2,
+        cache={},
+    )
+    assert results_seq[0].fitness == results_mp[0].fitness
+
+
+def test_baseline_league_files_loadable() -> None:
+    root = Path(__file__).resolve().parents[1]
+    baseline_path = root / "monopoly" / "data" / "params_baseline.json"
+    league_dir = root / "monopoly" / "data" / "league"
+    baseline = BotParams.from_json(baseline_path)
+    assert baseline is not None
+    league = load_league(league_dir)
+    assert league
+    for params in league:
+        assert isinstance(params, BotParams)
 
 
 def test_bench_smoke() -> None:
