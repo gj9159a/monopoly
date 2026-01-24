@@ -53,11 +53,22 @@ python -m pytest -k smoke
 - baseline: `monopoly/data/params_baseline.json`
 - league: `monopoly/data/league/*.json` (например `last_best.json`, `top_k.json`)
 
-Пример запуска тренировки:
+Быстрый прогон (small):
 
 ```bash
-python -m monopoly.train --iters 50 --population 48 --elite 12 --games-per-cand 20 --players 6 --seed 123 --opponents mixed --baseline monopoly/data/params_baseline.json --league-dir monopoly/data/league --cand-seats rotate --checkpoint-every 5 --out trained_params.json
+python -m monopoly.train --iters 5 --population 16 --elite 4 --games-per-cand 6 --players 6 --seed 123 --opponents mixed --cand-seats rotate --checkpoint-every 1 --out trained_params.json
 ```
+
+Полный прогон (full):
+
+```bash
+python -m monopoly.train --iters 50 --population 48 --elite 12 --games-per-cand 20 --players 6 --seed 123 --opponents mixed --cand-seats rotate --checkpoint-every 5 --out trained_params.json
+```
+
+Метрики:
+- `best_fitness` — лучший найденный fitness за всё обучение (больше = лучше).
+- `mean_elite`/`std_elite` — среднее/разброс лучших кандидатов в итерации.
+- `eval_cache.jsonl` — кэш оценок, ускоряет повторные оценки одинаковых θ.
 
 Будут созданы:
 - `trained_params.json` — лучший набор параметров
