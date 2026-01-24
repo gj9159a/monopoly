@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+import html as html_lib
 import os
 import subprocess
 import sys
@@ -11,6 +12,7 @@ from typing import Any
 import matplotlib.pyplot as plt
 import streamlit as st
 import streamlit.components.v1 as components
+import yaml
 
 from .engine import create_engine
 from .io_utils import read_json, tail_lines, write_json_atomic
@@ -88,6 +90,10 @@ def _default_workers() -> int:
     return max(1, (os.cpu_count() or 1) - 2)
 
 
+def _html_escape(text: str) -> str:
+    return html_lib.escape(str(text), quote=True)
+
+
 def _get(obj: Any, key: str, default: Any | None = None) -> Any:
     if isinstance(obj, dict):
         return obj.get(key, default)
@@ -112,6 +118,57 @@ def _cell_type_label(cell_type: str) -> str:
 
 def _cell_icon(cell_type: str) -> str:
     return CELL_TYPE_ICONS.get(cell_type, "")
+
+
+def _load_card_ids(data_dir: Path) -> set[str]:
+    ids: set[str] = set()
+    for filename in ("cards_chance.yaml", "cards_community.yaml"):
+        path = data_dir / filename
+        try:
+            raw = yaml.safe_load(path.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        if isinstance(raw, list):
+            for item in raw:
+                if isinstance(item, dict) and item.get("id"):
+                    ids.add(str(item["id"]))
+    return ids
+
+
+def _official_texts_status(data_dir: Path) -> dict[str, Any]:
+    override_path = data_dir / "cards_texts_ru_official.yaml"
+    all_ids = _load_card_ids(data_dir)
+    if not override_path.exists():
+        return {
+            "available": False,
+            "missing": sorted(all_ids),
+            "error": None,
+            "path": str(override_path),
+        }
+    try:
+        raw = yaml.safe_load(override_path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        return {
+            "available": True,
+            "missing": sorted(all_ids),
+            "error": str(exc),
+            "path": str(override_path),
+        }
+    if not isinstance(raw, dict):
+        return {
+            "available": True,
+            "missing": sorted(all_ids),
+            "error": "Файл должен содержать словарь id -> text_ru",
+            "path": str(override_path),
+        }
+    override_ids = {str(k) for k in raw.keys() if k is not None}
+    missing = sorted(all_ids - override_ids)
+    return {
+        "available": True,
+        "missing": missing,
+        "error": None,
+        "path": str(override_path),
+    }
 
 
 def _perimeter_coords() -> list[tuple[int, int]]:
@@ -157,7 +214,12 @@ def _compute_net_worth(state: Any, player_id: int) -> int:
     return total
 
 
-def _build_center_panel(state: Any, mode: str, thinking: dict[str, Any] | None = None) -> str:
+def _build_center_panel(
+    state: Any,
+    mode: str,
+    thinking: dict[str, Any] | None = None,
+    cards_status: dict[str, Any] | None = None,
+) -> str:
     players = _get(state, "players", [])
     board = _get(state, "board", [])
     event_log = _get(state, "event_log", [])
@@ -231,6 +293,27 @@ def _build_center_panel(state: Any, mode: str, thinking: dict[str, Any] | None =
     last_roll_text = _event_msg(last_roll) if last_roll else "—"
     jail_text = "Да" if active_player and _get(active_player, "in_jail", False) else "Нет"
 
+    legend_icons = (
+        "■ улица, 🚆 вокзал, ⚡ коммуналка, ¤ налог, ? шанс, ✚ казна, ⛓ тюрьма, ▶ старт, P парковка, ⇢ в тюрьму"
+    )
+    legend_badges = (
+        "<span class='badge badge-mort'>ИП</span> ипотека, "
+        "<span class='badge badge-build'>Д1–Д4</span> дома, "
+        "<span class='badge badge-build'>Н</span> отель"
+    )
+    official_texts = "не подключены"
+    official_class = "status-bad"
+    if cards_status and cards_status.get("available"):
+        if cards_status.get("missing"):
+            official_texts = "неполные"
+            official_class = "status-warn"
+        elif cards_status.get("error"):
+            official_texts = "ошибка"
+            official_class = "status-warn"
+        else:
+            official_texts = "подключены"
+            official_class = "status-ok"
+
     return f"""
     <div class='center-grid'>
       <div class='center-block'>
@@ -259,7 +342,13 @@ def _build_center_panel(state: Any, mode: str, thinking: dict[str, Any] | None =
       <div class='center-block'>
         <div class='center-title'>Управление</div>
         <div class='center-meta'>Шаг / +10 / +100 / До конца — кнопки под доской</div>
-        <div class='center-meta'>Периметр = 40 клеток (раскладка 11x11)</div>
+        <div class='center-meta'>Периметр = 40 клеток, центр 9×9 под панель.</div>
+      </div>
+      <div class='center-block'>
+        <div class='center-title'>Легенда</div>
+        <div class='center-meta'>{legend_badges}</div>
+        <div class='center-meta'>{legend_icons}</div>
+        <div class='center-meta'>Офиц. тексты: <span class='{official_class}'>{official_texts}</span></div>
       </div>
     </div>
     """
@@ -315,11 +404,13 @@ def _render_board(
         )
         corner_class = "corner" if idx in {0, 10, 20, 30} else ""
         active_class = "active" if active_position == idx else ""
+        cell_name_raw = _get(cell, "name", "")
+        cell_name = _html_escape(cell_name_raw)
         html_cells.append(
             f"""
             <div class='cell {corner_class} {active_class}' style='grid-row:{row + 1}; grid-column:{col + 1};'>
               {color_strip}
-              <div class='cell-title'>{_get(cell, 'name', '')}</div>
+              <div class='cell-title' title='{cell_name}'>{cell_name}</div>
               <div class='cell-type'>{type_icon} {type_label}</div>
               <div class='cell-meta'>{owner_text}</div>
               <div class='cell-meta'>{mort_text} {build_text}</div>
@@ -375,6 +466,7 @@ def _render_board(
         -webkit-box-orient: vertical;
         -webkit-line-clamp: 2;
         overflow: hidden;
+        text-overflow: ellipsis;
       }}
       .cell-type {{
         font-size: 10px;
@@ -414,7 +506,7 @@ def _render_board(
       .board-center {{
         grid-row: 2 / span 9;
         grid-column: 2 / span 9;
-        background: #fff8f1;
+        background: #fdf7ef;
         border: 1px solid #d7cbb7;
         border-radius: 10px;
         padding: 10px;
@@ -425,36 +517,39 @@ def _render_board(
         grid-template-columns: repeat(2, minmax(0, 1fr));
         grid-auto-rows: minmax(80px, auto);
         gap: 10px;
-        font-size: 12px;
+        font-size: 11px;
       }}
       .center-block {{
-        background: #fffdf8;
+        background: #fffdf6;
         border: 1px solid #e4d6c2;
         border-radius: 8px;
-        padding: 8px;
+        padding: 9px;
       }}
       .center-title {{
         font-weight: 700;
-        margin-bottom: 4px;
+        font-size: 11px;
+        text-transform: uppercase;
+        letter-spacing: 0.02em;
+        margin-bottom: 6px;
       }}
       .center-value {{
-        font-size: 14px;
+        font-size: 13px;
         font-weight: 700;
       }}
       .center-meta {{
-        font-size: 11px;
-        color: #4a3e2d;
+        font-size: 10.5px;
+        color: #5d5141;
       }}
       .event-list {{
         max-height: 140px;
         overflow: hidden;
       }}
       .event-line {{
-        font-size: 11px;
-        color: #3f352a;
+        font-size: 10.5px;
+        color: #4b4035;
       }}
       .event-highlight {{
-        font-size: 11px;
+        font-size: 10.5px;
         font-weight: 700;
         margin-bottom: 4px;
       }}
@@ -483,6 +578,18 @@ def _render_board(
         .event-list {{
           max-height: 100px;
         }}
+      }}
+      .status-ok {{
+        color: #1f6b1f;
+        font-weight: 700;
+      }}
+      .status-warn {{
+        color: #8c4b1f;
+        font-weight: 700;
+      }}
+      .status-bad {{
+        color: #8c1f1f;
+        font-weight: 700;
       }}
     </style>
     <div class='board-grid'>
@@ -605,7 +712,7 @@ def _start_live_match(
 # Modes
 # ---------------------------------------------------------
 
-def render_game_mode() -> None:
+def render_game_mode(cards_status: dict[str, Any] | None = None) -> None:
     with st.sidebar:
         st.header("Управление")
         num_players = st.slider("Число ботов", min_value=2, max_value=6, value=4, step=1)
@@ -652,7 +759,7 @@ def render_game_mode() -> None:
     engine = st.session_state.engine
     state = engine.state
 
-    center_html = _build_center_panel(state, mode="game")
+    center_html = _build_center_panel(state, mode="game", cards_status=cards_status)
     _render_board(state.board, state.players, state.current_player, center_html)
 
     st.subheader("Управление")
@@ -875,7 +982,7 @@ def render_training_mode() -> None:
                     )
 
 
-def render_live_mode() -> None:
+def render_live_mode(cards_status: dict[str, Any] | None = None) -> None:
     runs_base = ROOT_DIR / "runs"
     latest = latest_run(runs_base)
     selected_runs = st.session_state.get("train_runs_dir")
@@ -944,7 +1051,7 @@ def render_live_mode() -> None:
         "time_left_sec": payload.get("time_left_sec", 0.0),
     }
 
-    center_html = _build_center_panel(payload, mode="live", thinking=thinking)
+    center_html = _build_center_panel(payload, mode="live", thinking=thinking, cards_status=cards_status)
     _render_board(payload.get("board", []), payload.get("players", []), payload.get("current_player"), center_html)
 
 
@@ -957,16 +1064,27 @@ def main() -> None:
     st.title("Монополия — наблюдатель")
     st.caption("Режимы: игра, тренировка, live матч.")
 
+    data_dir = ROOT_DIR / "monopoly" / "data"
+    cards_status = _official_texts_status(data_dir)
+    if cards_status.get("available"):
+        if cards_status.get("error"):
+            st.warning(f"cards_texts_ru_official.yaml: {cards_status['error']}")
+        elif cards_status.get("missing"):
+            missing = cards_status.get("missing", [])
+            preview = ", ".join(missing[:10])
+            tail = f" (+{len(missing) - 10})" if len(missing) > 10 else ""
+            st.warning(f"cards_texts_ru_official.yaml: не хватает id: {preview}{tail}")
+
     with st.sidebar:
         st.header("Режим")
         mode = st.radio("", ["Игра", "Тренировка", "Live матч"], index=0)
 
     if mode == "Игра":
-        render_game_mode()
+        render_game_mode(cards_status=cards_status)
     elif mode == "Тренировка":
         render_training_mode()
     else:
-        render_live_mode()
+        render_live_mode(cards_status=cards_status)
 
 
 if __name__ == "__main__":
