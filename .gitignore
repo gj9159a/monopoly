@@ -12,4 +12,6 @@ __pycache__/
 .ruff_cache/
 .coverage
 htmlcov/
+runs/*
+!runs/seeds.txt
 .DS_Store
