@@ -18,6 +18,13 @@ def write_json_atomic(path: Path, payload: Any) -> None:
     tmp_path.replace(path)
 
 
+def write_text_atomic(path: Path, text: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = path.with_suffix(path.suffix + ".tmp")
+    tmp_path.write_text(text, encoding="utf-8")
+    tmp_path.replace(path)
+
+
 def tail_lines(path: Path, max_lines: int = 200) -> list[str]:
     if max_lines <= 0 or not path.exists():
         return []

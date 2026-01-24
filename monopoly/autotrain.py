@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import json
 import os
 import random
 import signal
@@ -12,8 +13,8 @@ from pathlib import Path
 from statistics import mean, pstdev
 from typing import Any
 
-from .bench import bench, load_seed_pack
-from .io_utils import write_json_atomic
+from .bench import bench
+from .io_utils import write_json_atomic, write_text_atomic
 from .params import BotParams, PARAM_SPECS, load_params, params_to_vector, save_params, vector_to_params
 from .status import REQUIRED_STATUS_FIELDS, write_status
 from .train import build_eval_cases, build_opponent_pool, evaluate_candidates, load_league
@@ -114,6 +115,23 @@ def _prepare_status(payload: dict[str, Any]) -> dict[str, Any]:
     return payload
 
 
+def _write_summary(path: Path, status: dict[str, Any], stop_reason: str) -> None:
+    lines = [
+        f"stop_reason: {stop_reason}",
+        f"epoch: {status.get('epoch')}",
+        f"best_fitness: {status.get('best_fitness')}",
+        (
+            "best_winrate: "
+            f"{status.get('best_winrate_mean')} "
+            f"[{status.get('best_winrate_ci_low')}, {status.get('best_winrate_ci_high')}]"
+        ),
+        f"total_games: {status.get('total_games_simulated')}",
+        f"best_params_path: {status.get('best_params_path')}",
+        f"runs_dir: {status.get('runs_dir')}",
+    ]
+    write_text_atomic(path, "\n".join(lines))
+
+
 def run_autotrain(
     profile: str,
     epoch_iters: int,
@@ -136,6 +154,7 @@ def run_autotrain(
     runs_dir: Path,
     max_hours: float | None,
     seeds_file: Path | None,
+    resume: bool,
 ) -> None:
     if elite > population:
         raise ValueError("elite должен быть <= population")
@@ -149,6 +168,8 @@ def run_autotrain(
     best_path = runs_dir / "best.json"
     last_bench_path = runs_dir / "last_bench.json"
     cache_path = runs_dir / "eval_cache.jsonl"
+    mean_std_path = runs_dir / "mean_std.json"
+    summary_path = runs_dir / "summary.txt"
 
     baseline = load_params(baseline_path)
     league = load_league(league_dir)
@@ -162,28 +183,47 @@ def run_autotrain(
     cache: dict[str, Any] = {}
 
     started_at = _utc_now()
-    status = _prepare_status(
-        {
-            "epoch": 0,
-            "best_fitness": -1e9,
-            "best_winrate_mean": 0.0,
-            "best_winrate_ci_low": 0.0,
-            "best_winrate_ci_high": 0.0,
-            "promoted_count": 0,
-            "last_promoted_epoch": 0,
-            "plateau_counter": 0,
-            "plateau_epochs": plateau_epochs,
-            "total_games_simulated": 0,
-            "eval_seconds_last_epoch": 0.0,
-            "cache_hits_last_epoch": 0,
-            "current_phase": "training",
-            "started_at": started_at,
-            "updated_at": started_at,
-            "runs_dir": str(runs_dir),
-            "best_params_path": str(best_path),
-        }
-    )
-    write_status(status_path, status)
+    status: dict[str, Any]
+    if resume and status_path.exists():
+        status = json.loads(status_path.read_text(encoding="utf-8"))
+        status = _prepare_status(status)
+        status["plateau_epochs"] = plateau_epochs
+        if best_path.exists():
+            cem_state.best_params = load_params(best_path)
+            cem_state.best_score = float(status.get("best_fitness", -1e9))
+        if mean_std_path.exists():
+            payload = json.loads(mean_std_path.read_text(encoding="utf-8"))
+            means = payload.get("mean")
+            stds = payload.get("std")
+            if isinstance(means, list) and isinstance(stds, list):
+                cem_state.means = [float(value) for value in means]
+                cem_state.stds = [float(value) for value in stds]
+        status["current_phase"] = "training"
+        status["updated_at"] = _utc_now()
+        write_status(status_path, status)
+    else:
+        status = _prepare_status(
+            {
+                "epoch": 0,
+                "best_fitness": -1e9,
+                "best_winrate_mean": 0.0,
+                "best_winrate_ci_low": 0.0,
+                "best_winrate_ci_high": 0.0,
+                "promoted_count": 0,
+                "last_promoted_epoch": 0,
+                "plateau_counter": 0,
+                "plateau_epochs": plateau_epochs,
+                "total_games_simulated": 0,
+                "eval_seconds_last_epoch": 0.0,
+                "cache_hits_last_epoch": 0,
+                "current_phase": "training",
+                "started_at": started_at,
+                "updated_at": started_at,
+                "runs_dir": str(runs_dir),
+                "best_params_path": str(best_path),
+            }
+        )
+        write_status(status_path, status)
 
     write_header = not log_path.exists()
     with log_path.open("a", newline="", encoding="utf-8") as log_file:
@@ -196,35 +236,39 @@ def run_autotrain(
                     "best_winrate_mean",
                     "best_winrate_ci_low",
                     "best_winrate_ci_high",
+                    "plateau_counter",
+                    "promoted_count",
                     "cache_hits",
                     "eval_seconds",
                     "games_simulated",
                 ]
             )
 
-        total_games = 0
-        promoted_count = 0
-        last_promoted_epoch = 0
-        plateau_counter = 0
-        prev_best_fitness = status["best_fitness"]
-        prev_best_winrate = status["best_winrate_mean"]
+        total_games = int(status.get("total_games_simulated", 0) or 0)
+        promoted_count = int(status.get("promoted_count", 0) or 0)
+        last_promoted_epoch = int(status.get("last_promoted_epoch", 0) or 0)
+        plateau_counter = int(status.get("plateau_counter", 0) or 0)
+        prev_best_fitness = float(status.get("best_fitness", -1e9))
+        prev_best_winrate = float(status.get("best_winrate_mean", 0.0))
         stop_reason = "plateau"
         start_time = time.perf_counter()
 
         def _handle_stop(signum: int, frame: Any) -> None:
-            status.update(
-                {
-                    "current_phase": "stopped",
-                    "updated_at": _utc_now(),
-                }
-            )
+            phase = "stopped"
+            if status_path.exists():
+                existing = json.loads(status_path.read_text(encoding="utf-8"))
+                phase = existing.get("current_phase", "stopped")
+                if phase not in {"paused", "stopped"}:
+                    phase = "stopped"
+            status.update({"current_phase": phase, "updated_at": _utc_now()})
             write_status(status_path, status)
+            _write_summary(summary_path, status, phase)
             raise SystemExit(0)
 
         signal.signal(signal.SIGINT, _handle_stop)
         signal.signal(signal.SIGTERM, _handle_stop)
 
-        epoch = 0
+        epoch = int(status.get("epoch", 0) or 0)
         while True:
             epoch += 1
             epoch_start = time.perf_counter()
@@ -273,7 +317,7 @@ def run_autotrain(
             write_status(status_path, status)
 
             if seeds_file is None:
-                default_seeds = Path("runs/seeds.txt")
+                default_seeds = Path("monopoly/data/seeds.txt")
                 if default_seeds.exists():
                     seeds_file = default_seeds
 
@@ -333,6 +377,14 @@ def run_autotrain(
                 }
             )
             write_status(status_path, status)
+            write_json_atomic(
+                mean_std_path,
+                {
+                    "params": [spec.name for spec in PARAM_SPECS],
+                    "mean": [float(value) for value in cem_state.means],
+                    "std": [float(value) for value in cem_state.stds],
+                },
+            )
 
             writer.writerow(
                 [
@@ -341,6 +393,8 @@ def run_autotrain(
                     f"{best_winrate:.6f}",
                     f"{best_ci_low:.6f}",
                     f"{best_ci_high:.6f}",
+                    plateau_counter,
+                    promoted_count,
                     cache_hits_epoch,
                     f"{epoch_elapsed:.4f}",
                     total_games,
@@ -375,6 +429,7 @@ def run_autotrain(
             }
         )
         write_status(status_path, status)
+        _write_summary(summary_path, status, status["current_phase"])
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -403,6 +458,7 @@ def build_parser() -> argparse.ArgumentParser:
     run_parser.add_argument("--runs-dir", type=Path, default=None)
     run_parser.add_argument("--max-hours", type=float, default=None)
     run_parser.add_argument("--seeds-file", type=Path, default=None)
+    run_parser.add_argument("--resume", action="store_true")
     return parser
 
 
@@ -449,6 +505,7 @@ def main(argv: list[str] | None = None) -> None:
         runs_dir=runs_dir,
         max_hours=args.max_hours,
         seeds_file=args.seeds_file,
+        resume=args.resume,
     )
 
 
