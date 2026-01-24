@@ -179,6 +179,7 @@ python -m monopoly.progress --league-dir monopoly/data/league --baseline monopol
 - `monopoly/data/board.yaml` — поле с московскими названиями и каноническими ценами/рентой/домами/ипотекой (USD).
 - `monopoly/data/cards_chance.yaml` — карточки Шанс (placeholder).
 - `monopoly/data/cards_community.yaml` — карточки Казна (placeholder).
+- `monopoly/data/cards_texts_ru_official.yaml` — опциональный файл с официальными текстами (id -> text_ru).
 - `monopoly/data/rules.yaml` — флаги правил и базовые параметры (HR1/HR2/штраф тюрьмы и т.д.).
 - `monopoly/data/params_baseline.json` — baseline параметры бота.
 - `monopoly/data/league/*.json` — пул лучших параметров для self-play.

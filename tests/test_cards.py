@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from pathlib import Path
+
+from monopoly.data_loader import load_cards
 from monopoly.engine import create_engine
 from monopoly.models import Card, DeckState
 
@@ -106,10 +109,97 @@ def test_move_to_next_railroad_wraps():
     card = Card(
         card_id="test_next_rail",
         text_ru="Тест: следующее депо",
-        effect={"type": "move_to_next", "kind": "railroad"},
+        effect={"type": "move_to_next", "kind": "railroad", "auction_if_unowned": False},
         deck="chance",
     )
     engine._apply_card_effect(card, player, 0)
 
     assert player.position == 5
     assert player.money == engine.state.rules.go_salary
+
+
+def test_deck_sizes_and_unique_ids():
+    root = Path(__file__).resolve().parents[1]
+    chance_cards = load_cards(root / "monopoly" / "data" / "cards_chance.yaml", "chance")
+    community_cards = load_cards(root / "monopoly" / "data" / "cards_community.yaml", "community")
+    assert len(chance_cards) == 16
+    assert len(community_cards) == 16
+    assert len({card.card_id for card in chance_cards}) == 16
+    assert len({card.card_id for card in community_cards}) == 16
+
+
+def test_rent_mode_railroad_double_and_hr2_mortgage():
+    engine = create_engine(num_players=2, seed=1)
+    player = engine.state.players[0]
+    owner = engine.state.players[1]
+    rail = engine.state.board[5]
+    rail.owner_id = owner.player_id
+    owner.properties.append(rail.index)
+    player.position = 4
+    player.money = 500
+    owner.money = 100
+
+    card = Card(
+        card_id="test_next_rail_double",
+        text_ru="Тест: двойная рента",
+        effect={"type": "move_to_next", "kind": "railroad", "rent_mode": "double"},
+        deck="chance",
+    )
+    engine._apply_card_effect(card, player, 0, dice_total=7)
+    assert player.position == 5
+    assert player.money == 450
+    assert owner.money == 150
+
+    rail.mortgaged = True
+    player.money = 500
+    owner.money = 100
+    player.position = 4
+    engine._apply_card_effect(card, player, 1, dice_total=7)
+    assert player.money == 500
+    assert owner.money == 100
+
+    rail.mortgaged = False
+    owner.in_jail = True
+    player.money = 500
+    owner.money = 100
+    player.position = 4
+    engine._apply_card_effect(card, player, 2, dice_total=7)
+    assert player.money == 500
+    assert owner.money == 100
+
+
+def test_repairs_effect():
+    engine = create_engine(num_players=2, seed=1)
+    player = engine.state.players[0]
+    cell_a = engine.state.board[1]
+    cell_b = engine.state.board[3]
+    cell_a.owner_id = player.player_id
+    cell_b.owner_id = player.player_id
+    cell_a.houses = 2
+    cell_b.hotels = 1
+    player.money = 500
+
+    card = Card(
+        card_id="test_repairs",
+        text_ru="Тест: ремонт",
+        effect={"type": "repairs", "per_house": 25, "per_hotel": 100},
+        deck="community",
+    )
+    engine._apply_card_effect(card, player, 0, dice_total=None)
+    assert player.money == 350
+
+
+def test_go_back_three_spaces_lands_and_pays_tax():
+    engine = create_engine(num_players=2, seed=1)
+    player = engine.state.players[0]
+    player.position = 7
+    player.money = 500
+    card = Card(
+        card_id="test_go_back",
+        text_ru="Тест: назад на 3",
+        effect={"type": "move_relative", "steps": -3},
+        deck="chance",
+    )
+    engine._apply_card_effect(card, player, 0, dice_total=None)
+    assert player.position == 4
+    assert player.money == 300
