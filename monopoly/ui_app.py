@@ -38,6 +38,48 @@ except Exception:  # pragma: no cover - fallback when dependency отсутст�
         return None
 
 
+CELL_TYPE_LABELS = {
+    "go": "Старт",
+    "property": "Улица",
+    "railroad": "Вокзал",
+    "utility": "Коммун.",
+    "tax": "Налог",
+    "chance": "Шанс",
+    "community": "Казна",
+    "jail": "Тюрьма",
+    "free_parking": "Парковка",
+    "go_to_jail": "В тюрьму",
+}
+
+CELL_TYPE_ICONS = {
+    "go": "▶",
+    "property": "■",
+    "railroad": "🚆",
+    "utility": "⚡",
+    "tax": "¤",
+    "chance": "?",
+    "community": "✚",
+    "jail": "⛓",
+    "free_parking": "P",
+    "go_to_jail": "⇢",
+}
+
+GROUP_COLORS = {
+    "brown": "#8b5a2b",
+    "light_blue": "#89c5f5",
+    "pink": "#f2a4c8",
+    "orange": "#f39c4a",
+    "red": "#e2574c",
+    "yellow": "#f0d45b",
+    "green": "#3c9a5f",
+    "blue": "#3665d2",
+}
+
+
+# ---------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------
+
 def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
@@ -64,6 +106,14 @@ def _event_msg(event: Any) -> str:
     return str(getattr(event, "msg_ru", ""))
 
 
+def _cell_type_label(cell_type: str) -> str:
+    return CELL_TYPE_LABELS.get(cell_type, "Клетка")
+
+
+def _cell_icon(cell_type: str) -> str:
+    return CELL_TYPE_ICONS.get(cell_type, "")
+
+
 def _perimeter_coords() -> list[tuple[int, int]]:
     coords: list[tuple[int, int]] = []
     for col in range(10, -1, -1):
@@ -77,150 +127,47 @@ def _perimeter_coords() -> list[tuple[int, int]]:
     return coords
 
 
-def _render_board(board: list[Any], players: list[Any], active_player_id: int | None) -> None:
-    coords = _perimeter_coords()
-    grid = [["" for _ in range(11)] for _ in range(11)]
-
-    players_at = {pos: [] for pos in range(40)}
-    for player in players:
-        pos = int(_get(player, "position", 0))
-        players_at[pos].append(player)
-
-    active_position = None
-    if active_player_id is not None and 0 <= active_player_id < len(players):
-        active_position = int(_get(players[active_player_id], "position", 0))
-
-    for idx, cell in enumerate(board):
-        row, col = coords[idx]
-        owner_text = ""
-        owner_id = _get(cell, "owner_id")
-        if owner_id is not None and 0 <= int(owner_id) < len(players):
-            owner_name = _get(players[int(owner_id)], "name", "?")
-            owner_text = f"Вл: {owner_name}"
-        mort_text = "ИП" if _get(cell, "mortgaged", False) else ""
-        build_text = ""
-        if _get(cell, "hotels", 0):
-            build_text = "🏨"
-        elif _get(cell, "houses", 0):
-            build_text = f"🏠x{_get(cell, 'houses', 0)}"
-        tokens = " ".join(
-            [
-                f"P{_get(p, 'player_id', 0) + 1}"
-                + ("★" if _get(p, "player_id") == active_player_id else "")
-                for p in players_at[idx]
-            ]
-        )
-        players_text = f"Игроки: {tokens}" if tokens else ""
-        parts = [f"<div class='name'>{_get(cell, 'name', '')}</div>"]
-        for line in [owner_text, mort_text, build_text, players_text]:
-            if line:
-                parts.append(f"<div class='meta'>{line}</div>")
-        cell_class = "cell active" if active_position == idx else "cell"
-        grid[row][col] = f"<div class='{cell_class}'>" + "".join(parts) + "</div>"
-
-    html_rows = []
-    for row in grid:
-        html_cells = [cell if cell else "<div class='cell'></div>" for cell in row]
-        html_rows.append("".join(html_cells))
-    html = f"""
-    <style>
-      .board {{
-        display: grid;
-        grid-template-columns: repeat(11, minmax(60px, 1fr));
-        grid-auto-rows: 70px;
-        gap: 2px;
-        background: #e6e0d6;
-        padding: 6px;
-        border-radius: 10px;
-      }}
-      .cell {{
-        background: #f7f2ea;
-        border: 1px solid #c9bfae;
-        padding: 4px;
-        font-size: 10px;
-        line-height: 1.1;
-        overflow: hidden;
-      }}
-      .cell.active {{
-        border: 2px solid #c44d29;
-        box-shadow: inset 0 0 0 2px #f2d3c7;
-        background: #fff3ee;
-      }}
-      .name {{
-        font-weight: 700;
-        font-size: 11px;
-      }}
-      .meta {{
-        color: #4a3e2d;
-      }}
-    </style>
-    <div class='board'>
-      {"".join(html_rows)}
-    </div>
-    """
-    st.markdown(html, unsafe_allow_html=True)
+def _player_badge(player: Any, active_player_id: int | None) -> str:
+    pid = int(_get(player, "player_id", 0))
+    token = f"P{pid + 1}"
+    if active_player_id is not None and pid == active_player_id:
+        token += "★"
+    if _get(player, "in_jail", False):
+        token += "🔒"
+    return token
 
 
-def _render_players(players: list[Any], board: list[Any]) -> None:
-    owned_map: dict[int, list[str]] = {}
-    for cell in board:
-        owner_id = _get(cell, "owner_id")
-        if owner_id is None:
-            continue
-        owner_id = int(owner_id)
-        owned_map.setdefault(owner_id, []).append(str(_get(cell, "name", "")))
-
-    table = []
-    for player in players:
-        player_id = int(_get(player, "player_id", 0))
-        table.append(
-            {
-                "Игрок": _get(player, "name", ""),
-                "Деньги": _get(player, "money", 0),
-                "Позиция": _get(player, "position", 0),
-                "В тюрьме": "Да" if _get(player, "in_jail", False) else "Нет",
-                "Активы": len(owned_map.get(player_id, [])),
-            }
-        )
-    st.dataframe(table, use_container_width=True)
-
-    for player in players:
-        player_id = int(_get(player, "player_id", 0))
-        with st.expander(f"{_get(player, 'name', '')} — собственность"):
-            names = owned_map.get(player_id, [])
-            if names:
-                st.write(", ".join(names))
-            else:
-                st.write("Нет собственности")
-
-
-def _render_log(events: list[Any]) -> None:
-    st.subheader("Лента событий")
-    for event in reversed(events[-30:]):
-        st.write(f"- {_event_msg(event)}")
-
-
-def _render_turn_panel(state: Any) -> None:
-    st.subheader("Текущий ход")
-    if _get(state, "game_over", False):
-        winner_id = _get(state, "winner_id")
-        players = _get(state, "players", [])
-        winner_name = "не определен"
-        if winner_id is not None and 0 <= int(winner_id) < len(players):
-            winner_name = _get(players[int(winner_id)], "name", "не определен")
-        st.success(f"Игра окончена. Победитель: {winner_name}")
-        return
-
+def _compute_net_worth(state: Any, player_id: int) -> int:
     players = _get(state, "players", [])
     board = _get(state, "board", [])
-    active_id = int(_get(state, "current_player", 0))
-    if not players or not board:
-        st.write("Нет данных о состоянии.")
-        return
-    active_player = players[active_id]
-    current_cell = board[int(_get(active_player, "position", 0))]
+    if player_id >= len(players):
+        return 0
+    player = players[player_id]
+    total = int(_get(player, "money", 0))
+    for cell in board:
+        if _get(cell, "owner_id") != player_id:
+            continue
+        if _get(cell, "mortgaged", False):
+            total += int(_get(cell, "mortgage_value", 0) or 0)
+        else:
+            total += int(_get(cell, "price", 0) or 0)
+        total += (int(_get(cell, "houses", 0)) + int(_get(cell, "hotels", 0)) * 5) * int(
+            _get(cell, "house_cost", 0) or 0
+        )
+    return total
 
+
+def _build_center_panel(state: Any, mode: str, thinking: dict[str, Any] | None = None) -> str:
+    players = _get(state, "players", [])
+    board = _get(state, "board", [])
     event_log = _get(state, "event_log", [])
+
+    current_player_id = int(_get(state, "current_player", 0)) if players else 0
+    active_player = players[current_player_id] if players else None
+    active_cell = None
+    if active_player and board:
+        active_cell = board[int(_get(active_player, "position", 0))]
+
     last_roll = next(
         (event for event in reversed(event_log) if _event_type(event) in {"DICE_ROLL", "JAIL_ROLL"}),
         None,
@@ -229,25 +176,301 @@ def _render_turn_panel(state: Any) -> None:
         (event for event in reversed(event_log) if _event_type(event) == "DRAW_CARD"),
         None,
     )
-    last_effect = next(
-        (event for event in reversed(event_log) if _event_type(event) == "CARD_EFFECT"),
-        None,
+
+    thinking_html = ""
+    if thinking:
+        if thinking.get("thinking"):
+            thinking_html = (
+                f"<div class='center-meta'>Думает… {thinking.get('decision_context','')}</div>"
+                f"<div class='center-meta'>Rollouts: {thinking.get('rollouts_done',0)} | "
+                f"Time left: {thinking.get('time_left_sec',0):.2f}s</div>"
+            )
+
+    events_tail = event_log[-12:]
+    events_html = "".join(
+        f"<div class='event-line'>{_event_msg(ev)}</div>" for ev in events_tail
     )
+    if last_card:
+        events_html = f"<div class='event-highlight'>{_event_msg(last_card)}</div>" + events_html
 
-    st.write(f"**Активный игрок:** {_get(active_player, 'name', '')}")
-    st.write(f"**Клетка:** {_get(current_cell, 'name', '')}")
-    st.write(f"**Последний бросок:** {_event_msg(last_roll) if last_roll else '—'}")
-    st.write(f"**Последняя карта:** {_event_msg(last_card) if last_card else '—'}")
-    st.write(f"**Результат карты:** {_event_msg(last_effect) if last_effect else '—'}")
+    players_rows = []
+    for player in players:
+        pid = int(_get(player, "player_id", 0))
+        houses = sum(
+            int(_get(cell, "houses", 0))
+            for cell in board
+            if _get(cell, "owner_id") == pid
+        )
+        hotels = sum(
+            int(_get(cell, "hotels", 0))
+            for cell in board
+            if _get(cell, "owner_id") == pid
+        )
+        mortgages = sum(
+            1
+            for cell in board
+            if _get(cell, "owner_id") == pid and _get(cell, "mortgaged", False)
+        )
+        props = sum(1 for cell in board if _get(cell, "owner_id") == pid)
+        net_worth = _compute_net_worth(state, pid)
+        jail = "Да" if _get(player, "in_jail", False) else "Нет"
+        players_rows.append(
+            "<tr>"
+            f"<td>{_get(player, 'name', '')}</td>"
+            f"<td>{int(_get(player, 'money', 0))}</td>"
+            f"<td>{net_worth}</td>"
+            f"<td>{props}</td>"
+            f"<td>{houses}/{hotels}</td>"
+            f"<td>{mortgages}</td>"
+            f"<td>{jail}</td>"
+            "</tr>"
+        )
 
-    tail_events = event_log[-3:]
-    if tail_events:
-        st.write("**Последние события:**")
-        for event in tail_events:
-            st.write(f"- {_event_msg(event)}")
-    else:
-        st.write("**Последние события:** —")
+    active_cell_name = _get(active_cell, "name", "—") if active_cell else "—"
+    active_player_name = _get(active_player, "name", "—") if active_player else "—"
+    last_roll_text = _event_msg(last_roll) if last_roll else "—"
 
+    return f"""
+    <div class='center-grid'>
+      <div class='center-block'>
+        <div class='center-title'>Текущий ход</div>
+        <div class='center-value'>{active_player_name}</div>
+        <div class='center-meta'>Клетка: {active_cell_name}</div>
+        <div class='center-meta'>Последний бросок: {last_roll_text}</div>
+        {thinking_html}
+      </div>
+      <div class='center-block'>
+        <div class='center-title'>События</div>
+        <div class='event-list'>{events_html}</div>
+      </div>
+      <div class='center-block'>
+        <div class='center-title'>Игроки</div>
+        <table class='players-table'>
+          <thead>
+            <tr><th>Игрок</th><th>Cash</th><th>Net</th><th>Участки</th><th>Д/О</th><th>ИП</th><th>Тюрьма</th></tr>
+          </thead>
+          <tbody>
+            {''.join(players_rows)}
+          </tbody>
+        </table>
+      </div>
+      <div class='center-block'>
+        <div class='center-title'>Управление</div>
+        <div class='center-meta'>Шаг / +10 / +100 / До конца — кнопки под доской</div>
+        <div class='center-meta'>Периметр = 40 клеток (раскладка 11x11)</div>
+      </div>
+    </div>
+    """
+
+
+# ---------------------------------------------------------
+# Board rendering
+# ---------------------------------------------------------
+
+def _render_board(
+    board: list[Any],
+    players: list[Any],
+    active_player_id: int | None,
+    center_html: str,
+) -> None:
+    coords = _perimeter_coords()
+
+    players_at = {pos: [] for pos in range(40)}
+    for player in players:
+        pos = int(_get(player, "position", 0))
+        players_at[pos].append(player)
+
+    active_position = None
+    if active_player_id is not None and 0 <= int(active_player_id) < len(players):
+        active_position = int(_get(players[int(active_player_id)], "position", 0))
+
+    html_cells = []
+    for idx, cell in enumerate(board):
+        row, col = coords[idx]
+        owner_text = ""
+        owner_id = _get(cell, "owner_id")
+        if owner_id is not None and 0 <= int(owner_id) < len(players):
+            owner_text = f"Вл: P{int(owner_id)+1}"
+        mort_text = "ИП" if _get(cell, "mortgaged", False) else ""
+        build_text = ""
+        if _get(cell, "hotels", 0):
+            build_text = "🏨"
+        elif _get(cell, "houses", 0):
+            build_text = f"🏠{_get(cell, 'houses', 0)}"
+        tokens = " ".join(
+            [_player_badge(p, active_player_id) for p in players_at[idx]]
+        )
+        players_text = f"{tokens}" if tokens else ""
+        cell_type = str(_get(cell, "cell_type", ""))
+        type_label = _cell_type_label(cell_type)
+        type_icon = _cell_icon(cell_type)
+        color = GROUP_COLORS.get(str(_get(cell, "group", "")), "")
+        color_strip = (
+            f"<div class='color-strip' style='background:{color}'></div>" if color else ""
+        )
+        corner_class = "corner" if idx in {0, 10, 20, 30} else ""
+        active_class = "active" if active_position == idx else ""
+        html_cells.append(
+            f"""
+            <div class='cell {corner_class} {active_class}' style='grid-row:{row + 1}; grid-column:{col + 1};'>
+              {color_strip}
+              <div class='cell-title'>{_get(cell, 'name', '')}</div>
+              <div class='cell-type'>{type_icon} {type_label}</div>
+              <div class='cell-meta'>{owner_text}</div>
+              <div class='cell-meta'>{mort_text} {build_text}</div>
+              <div class='cell-players'>{players_text}</div>
+            </div>
+            """
+        )
+
+    html = f"""
+    <style>
+      .board-grid {{
+        display: grid;
+        grid-template-columns: repeat(11, minmax(70px, 1fr));
+        grid-template-rows: repeat(11, minmax(70px, 1fr));
+        gap: 2px;
+        background: #e6e0d6;
+        padding: 6px;
+        border-radius: 12px;
+        position: relative;
+      }}
+      .cell {{
+        background: #f7f2ea;
+        border: 1px solid #c9bfae;
+        padding: 6px;
+        font-size: 11px;
+        line-height: 1.2;
+        display: flex;
+        flex-direction: column;
+        justify-content: space-between;
+        position: relative;
+      }}
+      .cell.active {{
+        border: 2px solid #c44d29;
+        box-shadow: inset 0 0 0 2px #f2d3c7;
+        background: #fff3ee;
+      }}
+      .cell.corner {{
+        background: #f2e8d8;
+        border: 2px solid #bfae98;
+        font-weight: 700;
+      }}
+      .cell-title {{
+        font-weight: 700;
+        font-size: 12px;
+        min-height: 28px;
+        word-break: break-word;
+        display: -webkit-box;
+        -webkit-box-orient: vertical;
+        -webkit-line-clamp: 2;
+        overflow: hidden;
+      }}
+      .cell-type {{
+        font-size: 10px;
+        color: #5a4c3c;
+      }}
+      .cell-meta {{
+        font-size: 10px;
+        color: #4a3e2d;
+      }}
+      .cell-players {{
+        font-size: 10px;
+        color: #2f2a24;
+        font-weight: 600;
+      }}
+      .color-strip {{
+        height: 6px;
+        border-radius: 2px;
+        margin-bottom: 4px;
+      }}
+      .board-center {{
+        grid-row: 2 / span 9;
+        grid-column: 2 / span 9;
+        background: #fff8f1;
+        border: 1px solid #d7cbb7;
+        border-radius: 10px;
+        padding: 10px;
+        overflow: hidden;
+      }}
+      .center-grid {{
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        grid-auto-rows: minmax(80px, auto);
+        gap: 10px;
+        font-size: 12px;
+      }}
+      .center-block {{
+        background: #fffdf8;
+        border: 1px solid #e4d6c2;
+        border-radius: 8px;
+        padding: 8px;
+      }}
+      .center-title {{
+        font-weight: 700;
+        margin-bottom: 4px;
+      }}
+      .center-value {{
+        font-size: 14px;
+        font-weight: 700;
+      }}
+      .center-meta {{
+        font-size: 11px;
+        color: #4a3e2d;
+      }}
+      .event-list {{
+        max-height: 140px;
+        overflow: hidden;
+      }}
+      .event-line {{
+        font-size: 11px;
+        color: #3f352a;
+      }}
+      .event-highlight {{
+        font-size: 11px;
+        font-weight: 700;
+        margin-bottom: 4px;
+      }}
+      .players-table {{
+        width: 100%;
+        font-size: 10px;
+        border-collapse: collapse;
+      }}
+      .players-table th, .players-table td {{
+        text-align: left;
+        padding: 2px 4px;
+        border-bottom: 1px solid #eee2d1;
+      }}
+      @media (max-width: 900px) {{
+        .board-grid {{
+          grid-template-columns: repeat(11, minmax(50px, 1fr));
+          grid-template-rows: repeat(11, minmax(50px, 1fr));
+        }}
+        .cell-title {{
+          font-size: 10px;
+          min-height: 20px;
+        }}
+        .center-grid {{
+          grid-template-columns: 1fr;
+        }}
+        .event-list {{
+          max-height: 100px;
+        }}
+      }}
+    </style>
+    <div class='board-grid'>
+      <div class='board-center'>
+        {center_html}
+      </div>
+      {"".join(html_cells)}
+    </div>
+    """
+    st.markdown(html, unsafe_allow_html=True)
+
+
+# ---------------------------------------------------------
+# Actions and modes
+# ---------------------------------------------------------
 
 def _start_autotrain(
     profile: str,
@@ -351,6 +574,10 @@ def _start_live_match(
     return out_path
 
 
+# ---------------------------------------------------------
+# Modes
+# ---------------------------------------------------------
+
 def render_game_mode() -> None:
     with st.sidebar:
         st.header("Управление")
@@ -398,18 +625,32 @@ def render_game_mode() -> None:
     engine = st.session_state.engine
     state = engine.state
 
-    col_left, col_right = st.columns([2, 1], gap="large")
-    with col_left:
-        st.subheader("Поле")
-        _render_board(state.board, state.players, state.current_player)
-        _render_log(state.event_log)
+    center_html = _build_center_panel(state, mode="game")
+    _render_board(state.board, state.players, state.current_player, center_html)
 
-    with col_right:
-        _render_turn_panel(state)
-        if st.session_state.get("run_info"):
-            st.info(st.session_state.run_info)
-        st.subheader("Игроки")
-        _render_players(state.players, state.board)
+    st.subheader("Управление")
+    cols = st.columns(4)
+    if cols[0].button("Шаг", key="step_main"):
+        st.session_state.engine.step()
+    if cols[1].button("+10", key="step_10_main"):
+        for _ in range(10):
+            if st.session_state.engine.state.game_over:
+                break
+            st.session_state.engine.step()
+    if cols[2].button("+100", key="step_100_main"):
+        for _ in range(100):
+            if st.session_state.engine.state.game_over:
+                break
+            st.session_state.engine.step()
+    if cols[3].button("До конца", key="step_end_main"):
+        max_steps = 5000
+        steps_done = 0
+        while steps_done < max_steps and not st.session_state.engine.state.game_over:
+            st.session_state.engine.step()
+            steps_done += 1
+
+    if st.session_state.get("run_info"):
+        st.info(st.session_state.run_info)
 
 
 def render_training_mode() -> None:
@@ -609,8 +850,7 @@ def render_training_mode() -> None:
 
 def render_live_mode() -> None:
     runs_base = ROOT_DIR / "runs"
-    runs = list_runs(runs_base, limit=10)
-    run_names = [run.name for run in runs]
+    latest = latest_run(runs_base)
     selected_runs = st.session_state.get("train_runs_dir")
     default_best = ""
     if selected_runs:
@@ -638,7 +878,7 @@ def render_live_mode() -> None:
         if params_path:
             runs_dir = Path(params_path).parent
         else:
-            runs_dir = latest_run(runs_base) or runs_base
+            runs_dir = latest or runs_base
         params = Path(params_path) if params_path else (runs_dir / "best.json")
         _start_live_match(
             runs_dir,
@@ -670,29 +910,20 @@ def render_live_mode() -> None:
 
     st_autorefresh(interval=refresh_ms, key="live_refresh")
 
-    if payload.get("thinking"):
-        st.info(
-            "Думает... "
-            f"Контекст: {payload.get('decision_context', '')} | "
-            f"Rollouts: {payload.get('rollouts_done', 0)} | "
-            f"Time left: {payload.get('time_left_sec', 0.0):.2f}s"
-        )
+    thinking = {
+        "thinking": payload.get("thinking"),
+        "decision_context": payload.get("decision_context", ""),
+        "rollouts_done": payload.get("rollouts_done", 0),
+        "time_left_sec": payload.get("time_left_sec", 0.0),
+    }
 
-    board = payload.get("board", [])
-    players = payload.get("players", [])
-    active_id = payload.get("current_player")
+    center_html = _build_center_panel(payload, mode="live", thinking=thinking)
+    _render_board(payload.get("board", []), payload.get("players", []), payload.get("current_player"), center_html)
 
-    col_left, col_right = st.columns([2, 1], gap="large")
-    with col_left:
-        st.subheader("Поле")
-        _render_board(board, players, active_id)
-        _render_log(payload.get("event_log", []))
 
-    with col_right:
-        _render_turn_panel(payload)
-        st.subheader("Игроки")
-        _render_players(players, board)
-
+# ---------------------------------------------------------
+# Main
+# ---------------------------------------------------------
 
 def main() -> None:
     st.set_page_config(page_title="Монополия — наблюдатель", layout="wide")
