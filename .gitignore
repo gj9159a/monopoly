@@ -14,3 +14,4 @@ __pycache__/
 htmlcov/
 runs/*
 .DS_Store
+monopoly/data/cards_texts_ru_official.yaml
