@@ -203,3 +203,26 @@ def test_go_back_three_spaces_lands_and_pays_tax():
     engine._apply_card_effect(card, player, 0, dice_total=None)
     assert player.position == 4
     assert player.money == 300
+
+
+def test_utility_10x_uses_dice_total():
+    engine = create_engine(num_players=2, seed=1)
+    player = engine.state.players[0]
+    owner = engine.state.players[1]
+    utility = engine.state.board[12]
+    utility.owner_id = owner.player_id
+    owner.properties.append(utility.index)
+    player.position = 11
+    player.money = 500
+    owner.money = 0
+
+    card = Card(
+        card_id="test_next_utility",
+        text_ru="Тест: коммуналка 10x",
+        effect={"type": "move_to_next", "kind": "utility", "rent_mode": "utility_10x"},
+        deck="chance",
+    )
+    engine._apply_card_effect(card, player, 0, dice_total=7)
+    assert player.position == 12
+    assert player.money == 430
+    assert owner.money == 70
