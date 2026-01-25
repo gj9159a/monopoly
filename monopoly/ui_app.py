@@ -365,6 +365,19 @@ def _build_board_html(
     active_player_id: int | None,
     center_html: str,
 ) -> str:
+    rows = 11
+    cell_h_min_px = 50
+    cell_h_max_px = 80
+    cell_h_vh = 6.5
+    gap_px = 2
+    pad_px = 6
+    extra_px = 24
+    min_iframe_height = 600
+
+    iframe_height = rows * cell_h_max_px + (rows - 1) * gap_px + 2 * pad_px + extra_px
+    if iframe_height < min_iframe_height:
+        iframe_height = min_iframe_height
+
     coords = _perimeter_coords()
 
     players_at = {pos: [] for pos in range(40)}
@@ -424,11 +437,11 @@ def _build_board_html(
     <style>
       .board-grid {{
         display: grid;
-        grid-template-columns: repeat(11, minmax(70px, 1fr));
-        grid-template-rows: repeat(11, minmax(70px, 1fr));
-        gap: 2px;
+        grid-template-columns: repeat({rows}, minmax({cell_h_min_px}px, 1fr));
+        grid-template-rows: repeat({rows}, clamp({cell_h_min_px}px, {cell_h_vh}vh, {cell_h_max_px}px));
+        gap: {gap_px}px;
         background: #e6e0d6;
-        padding: 6px;
+        padding: {pad_px}px;
         border-radius: 12px;
         position: relative;
       }}
@@ -566,8 +579,8 @@ def _build_board_html(
       }}
       @media (max-width: 900px) {{
         .board-grid {{
-          grid-template-columns: repeat(11, minmax(50px, 1fr));
-          grid-template-rows: repeat(11, minmax(50px, 1fr));
+          grid-template-columns: repeat({rows}, minmax({cell_h_min_px}px, 1fr));
+          grid-template-rows: repeat({rows}, clamp({cell_h_min_px}px, {cell_h_vh}vh, {cell_h_max_px}px));
         }}
         .cell-title {{
           font-size: 10px;
@@ -600,7 +613,7 @@ def _build_board_html(
       {"".join(html_cells)}
     </div>
     """
-    return textwrap.dedent(html).strip()
+    return textwrap.dedent(html).strip(), iframe_height
 
 
 def _render_board(
@@ -609,11 +622,11 @@ def _render_board(
     active_player_id: int | None,
     center_html: str,
 ) -> None:
-    html = _build_board_html(board, players, active_player_id, center_html)
+    html, iframe_height = _build_board_html(board, players, active_player_id, center_html)
     if html.count("class='cell") < 40:
         st.error("board html empty")
         return
-    components.html(html, height=920, scrolling=False)
+    components.html(html, height=iframe_height, scrolling=False)
 
 
 # ---------------------------------------------------------
