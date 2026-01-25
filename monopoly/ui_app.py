@@ -88,15 +88,15 @@ PLAYER_COLORS = [
 ]
 
 BOARD_STYLE = {
-    "cell_w_min": 86,
-    "cell_w_max": 120,
-    "cell_h_min": 76,
-    "cell_h_max": 110,
-    "cell_vh": 7.6,
-    "gap": 3,
-    "pad": 8,
-    "font_base": 13,
-    "font_small": 11,
+    "cell_w_min": 100,
+    "cell_w_max": 135,
+    "cell_h_min": 88,
+    "cell_h_max": 118,
+    "cell_vh": 8.2,
+    "gap": 2,
+    "pad": 6,
+    "font_base": 14,
+    "font_small": 12,
     "color_h": 18,
     "color_side": 7,
     "event_h": 260,
@@ -517,9 +517,12 @@ def _build_board_html(
         mort_text = "<span class='badge badge-mort'>ИП</span>" if _get(cell, "mortgaged", False) else ""
         owner_ribbon = ""
         if owner_id is not None and 0 <= int(owner_id) < len(players):
+            owner_idx = int(owner_id)
+            owner_color = PLAYER_COLORS[owner_idx]
+            owner_label = f"Вл P{owner_idx + 1}"
             owner_ribbon = (
-                "<div class='owner-ribbon'>"
-                f"<span class='owner-pill p{int(owner_id)+1}'>P{int(owner_id)+1}</span>"
+                f"<div class='owner-ribbon' style='--ownerColor: {owner_color};'>"
+                f"<span class='owner-label'>{owner_label}</span>"
                 f"{mort_text}"
                 "</div>"
             )
@@ -693,33 +696,27 @@ def _build_board_html(
         display: inline-flex;
         align-items: center;
         gap: 4px;
+        padding: 2px 6px;
+        border-radius: 10px;
+        background: var(--ownerColor, #8b8b8b);
+        color: #fff;
+        font-size: 9px;
+        font-weight: 700;
+        letter-spacing: 0.1px;
+        box-shadow: 0 1px 2px rgba(0, 0, 0, 0.18);
         z-index: 2;
       }}
       .cell.street .owner-ribbon {{
         top: calc(var(--colorH) + 6px);
       }}
-      .owner-pill {{
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-        padding: 1px 6px;
-        border-radius: 10px;
-        font-size: 9px;
-        font-weight: 700;
-        color: #fff;
-        border: 1px solid rgba(0, 0, 0, 0.18);
+      .owner-label {{
+        white-space: nowrap;
       }}
-      .owner-pill.p1 {{ background: {PLAYER_COLORS[0]}; }}
-      .owner-pill.p2 {{ background: {PLAYER_COLORS[1]}; }}
-      .owner-pill.p3 {{ background: {PLAYER_COLORS[2]}; }}
-      .owner-pill.p4 {{ background: {PLAYER_COLORS[3]}; }}
-      .owner-pill.p5 {{ background: {PLAYER_COLORS[4]}; }}
-      .owner-pill.p6 {{ background: {PLAYER_COLORS[5]}; }}
       .cell-body {{
         display: flex;
         flex-direction: column;
         gap: 3px;
-        padding-bottom: 18px;
+        padding-bottom: 20px;
       }}
       .cell-title {{
         font-weight: 700;
@@ -767,8 +764,8 @@ def _build_board_html(
         gap: 3px;
       }}
       .presence {{
-        width: 14px;
-        height: 14px;
+        width: 15px;
+        height: 15px;
         border-radius: 50%;
         display: inline-flex;
         align-items: center;
@@ -776,6 +773,7 @@ def _build_board_html(
         font-size: 9px;
         color: #fff;
         border: 1px solid rgba(0, 0, 0, 0.22);
+        box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.7) inset;
       }}
       .presence.p1 {{ background: {PLAYER_COLORS[0]}; }}
       .presence.p2 {{ background: {PLAYER_COLORS[1]}; }}
@@ -798,6 +796,8 @@ def _build_board_html(
       .badge-mort {{
         background: #f3c7c7;
         color: #8c1f1f;
+        padding: 0 4px;
+        font-size: 8px;
       }}
       .house {{
         width: 8px;
