@@ -5,6 +5,7 @@ import html as html_lib
 import os
 import subprocess
 import sys
+import textwrap
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -358,12 +359,12 @@ def _build_center_panel(
 # Board rendering
 # ---------------------------------------------------------
 
-def _render_board(
+def _build_board_html(
     board: list[Any],
     players: list[Any],
     active_player_id: int | None,
     center_html: str,
-) -> None:
+) -> str:
     coords = _perimeter_coords()
 
     players_at = {pos: [] for pos in range(40)}
@@ -375,7 +376,7 @@ def _render_board(
     if active_player_id is not None and 0 <= int(active_player_id) < len(players):
         active_position = int(_get(players[int(active_player_id)], "position", 0))
 
-    html_cells = []
+    html_cells: list[str] = []
     for idx, cell in enumerate(board):
         row, col = coords[idx]
         owner_text = ""
@@ -599,7 +600,20 @@ def _render_board(
       {"".join(html_cells)}
     </div>
     """
-    st.markdown(html, unsafe_allow_html=True)
+    return textwrap.dedent(html).strip()
+
+
+def _render_board(
+    board: list[Any],
+    players: list[Any],
+    active_player_id: int | None,
+    center_html: str,
+) -> None:
+    html = _build_board_html(board, players, active_player_id, center_html)
+    if html.count("class='cell") < 40:
+        st.error("board html empty")
+        return
+    components.html(html, height=920, scrolling=False)
 
 
 # ---------------------------------------------------------
