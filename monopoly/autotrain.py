@@ -451,7 +451,7 @@ def build_parser() -> argparse.ArgumentParser:
     run_parser.add_argument("--eps-winrate", type=float, default=0.01)
     run_parser.add_argument("--eps-fitness", type=float, default=0.02)
     run_parser.add_argument("--min-progress-games", type=int, default=400)
-    run_parser.add_argument("--delta", type=float, default=0.01)
+    run_parser.add_argument("--delta", type=float, default=0.005)
     run_parser.add_argument("--seed", type=int, default=123)
     run_parser.add_argument("--players", type=int, default=6)
     run_parser.add_argument("--max-steps", type=int, default=2000)

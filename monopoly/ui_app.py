@@ -1273,7 +1273,7 @@ def render_training_mode() -> None:
         elite = st.number_input("Elite", min_value=1, value=12, step=1)
         epoch_iters = st.number_input("Epoch iters", min_value=1, value=10, step=1)
         plateau_epochs = st.number_input("Plateau epochs", min_value=1, value=10, step=1)
-        plateau_delta = st.number_input("Plateau delta", min_value=0.0, value=0.01, step=0.01, format="%.2f")
+        plateau_delta = st.number_input("Plateau delta", min_value=0.0, value=0.005, step=0.001, format="%.3f")
         min_games = st.number_input("Min games", min_value=10, value=400, step=20)
         opponents = st.selectbox("Opponents", options=["baseline", "league", "mixed"], index=2)
         seat_rotation = st.checkbox("Seat rotation", value=True)

@@ -7,6 +7,13 @@ from typing import Any, Iterable
 
 import yaml
 
+from .features import (
+    denial_value,
+    positional_threat_others,
+    positional_threat_self,
+    railroad_synergy,
+    utility_synergy,
+)
 from .models import Cell, GameState, Player
 
 STAGES = ("early", "mid", "late")
@@ -24,6 +31,12 @@ AUCTION_FEATURES = [
     "is_railroad",
     "is_utility",
     "owned_in_group",
+    "positional_threat_self",
+    "positional_threat_others",
+    "railroad_synergy",
+    "utility_synergy",
+    "opponent_cash_min_norm",
+    "opponent_cash_pressure",
 ]
 
 BUILD_FEATURES = [
@@ -39,6 +52,11 @@ BUILD_FEATURES = [
     "has_monopoly",
     "bank_houses_ratio",
     "bank_hotels_ratio",
+    "positional_threat_others",
+    "house_scarcity",
+    "hotel_scarcity",
+    "denial_value",
+    "opponent_cash_pressure",
 ]
 
 MORTGAGE_FEATURES = [
@@ -52,6 +70,7 @@ MORTGAGE_FEATURES = [
     "cash_needed",
     "action_sell_building",
     "action_mortgage",
+    "positional_threat_self",
 ]
 
 JAIL_FEATURES = [
@@ -65,6 +84,8 @@ JAIL_FEATURES = [
     "action_roll",
     "danger_if_pay",
     "danger_if_use_card",
+    "lost_income_if_stay",
+    "saved_risk_if_stay",
 ]
 
 DECISION_FEATURES = {
@@ -126,6 +147,12 @@ def _default_weights() -> dict[str, dict[str, dict[str, float]]]:
         "is_railroad": 0.35,
         "is_utility": 0.1,
         "owned_in_group": 0.6,
+        "positional_threat_self": 0.0,
+        "positional_threat_others": 0.0,
+        "railroad_synergy": 0.0,
+        "utility_synergy": 0.0,
+        "opponent_cash_min_norm": 0.0,
+        "opponent_cash_pressure": 0.0,
     }
     build_base = {
         "bias": 0.0,
@@ -140,6 +167,11 @@ def _default_weights() -> dict[str, dict[str, dict[str, float]]]:
         "has_monopoly": 0.8,
         "bank_houses_ratio": 0.2,
         "bank_hotels_ratio": 0.2,
+        "positional_threat_others": 0.0,
+        "house_scarcity": 0.0,
+        "hotel_scarcity": 0.0,
+        "denial_value": 0.0,
+        "opponent_cash_pressure": 0.0,
     }
     mortgage_base = {
         "bias": 0.0,
@@ -152,6 +184,7 @@ def _default_weights() -> dict[str, dict[str, dict[str, float]]]:
         "cash_needed": 1.0,
         "action_sell_building": 0.7,
         "action_mortgage": 0.2,
+        "positional_threat_self": 0.0,
     }
     jail_base = {
         "bias": 0.0,
@@ -164,6 +197,8 @@ def _default_weights() -> dict[str, dict[str, dict[str, float]]]:
         "action_roll": 0.1,
         "danger_if_pay": -0.7,
         "danger_if_use_card": -0.6,
+        "lost_income_if_stay": 0.0,
+        "saved_risk_if_stay": 0.0,
     }
     return {
         "auction": _stage_weights(
@@ -481,6 +516,21 @@ def _max_opponent_rent(state: GameState, player_id: int) -> float:
     return max_rent
 
 
+def _opponent_cash_metrics(state: GameState, player_id: int) -> tuple[float, float]:
+    opponent_cash = [
+        opponent.money
+        for opponent in state.players
+        if opponent.player_id != player_id and not opponent.bankrupt
+    ]
+    if not opponent_cash:
+        return 0.0, 0.0
+    min_cash = min(opponent_cash)
+    min_norm = min_cash / (state.players[player_id].money + 1)
+    min_norm = min(2.0, max(0.0, min_norm))
+    pressure = 1.0 - min(1.0, max(0.0, min_cash / 500.0))
+    return min_norm, pressure
+
+
 def _group_strength(state: GameState, group: str | None) -> float:
     if not group:
         return 0.0
@@ -605,6 +655,13 @@ def decide_auction_bid(
     best_score = 0.0
     start_cash = max(1, state.rules.starting_cash)
     risk = _max_opponent_rent(state, player.player_id) / max(1.0, player.money)
+    threat_self = positional_threat_self(state, player.player_id) / start_cash
+    threat_others = positional_threat_others(state, player.player_id) / start_cash
+    opponent_cash_min_norm, opponent_cash_pressure = _opponent_cash_metrics(
+        state, player.player_id
+    )
+    rr_synergy = railroad_synergy(state, player.player_id, cell)
+    util_synergy = utility_synergy(state, player.player_id, cell)
 
     for bid in candidates:
         cash_after = player.money - bid
@@ -642,6 +699,12 @@ def decide_auction_bid(
             "is_railroad": 1.0 if cell.cell_type == "railroad" else 0.0,
             "is_utility": 1.0 if cell.cell_type == "utility" else 0.0,
             "owned_in_group": owned_in_group,
+            "positional_threat_self": threat_self,
+            "positional_threat_others": threat_others,
+            "railroad_synergy": rr_synergy,
+            "utility_synergy": util_synergy,
+            "opponent_cash_min_norm": opponent_cash_min_norm,
+            "opponent_cash_pressure": opponent_cash_pressure,
         }
         score = _score_action(weights, features)
         if score > best_score:
@@ -661,6 +724,8 @@ def decide_build_actions(state: GameState, player: Player, params: BotParams) ->
     weights = params.weights["build"][stage]
     start_cash = max(1, state.rules.starting_cash)
     enemy_threat = _max_opponent_rent(state, player.player_id) / max(1.0, player.money)
+    threat_others = positional_threat_others(state, player.player_id) / start_cash
+    _, opponent_cash_pressure = _opponent_cash_metrics(state, player.player_id)
 
     available_cash = player.money
     local_houses = {cell.index: cell.houses for cell in state.board}
@@ -674,6 +739,8 @@ def decide_build_actions(state: GameState, player: Player, params: BotParams) ->
         total_hotels = sum(local_hotels.values())
         bank_houses_ratio = (state.rules.bank_houses - total_houses) / max(1, state.rules.bank_houses)
         bank_hotels_ratio = (state.rules.bank_hotels - total_hotels) / max(1, state.rules.bank_hotels)
+        house_scarcity_value = 1.0 - bank_houses_ratio
+        hotel_scarcity_value = 1.0 - bank_hotels_ratio
 
         for cell in state.board:
             if cell.owner_id != player.player_id:
@@ -700,6 +767,8 @@ def decide_build_actions(state: GameState, player: Player, params: BotParams) ->
             cost = int(cell.house_cost or 0)
             if available_cash - cost < 0:
                 continue
+            houses_to_take = 1 if current_level < 4 else 0
+            hotels_to_take = 1 if current_level == 4 else 0
 
             features = {
                 "bias": 1.0,
@@ -714,6 +783,13 @@ def decide_build_actions(state: GameState, player: Player, params: BotParams) ->
                 "has_monopoly": 1.0,
                 "bank_houses_ratio": bank_houses_ratio,
                 "bank_hotels_ratio": bank_hotels_ratio,
+                "positional_threat_others": threat_others,
+                "house_scarcity": house_scarcity_value,
+                "hotel_scarcity": hotel_scarcity_value,
+                "denial_value": denial_value(
+                    houses_to_take, hotels_to_take, house_scarcity_value, hotel_scarcity_value
+                ),
+                "opponent_cash_pressure": opponent_cash_pressure,
             }
             score = _score_action(weights, features)
             candidates.append((score, cell))
@@ -747,6 +823,8 @@ def decide_liquidation(
         return actions
     stage = game_stage(state)
     weights = params.weights["mortgage"][stage]
+    start_cash = max(1, state.rules.starting_cash)
+    threat_self = positional_threat_self(state, player.player_id) / start_cash
 
     available_cash = player.money
     local_houses = {cell.index: cell.houses for cell in state.board}
@@ -774,6 +852,7 @@ def decide_liquidation(
                     "cash_needed": cash_needed,
                     "action_sell_building": 1.0,
                     "action_mortgage": 0.0,
+                    "positional_threat_self": threat_self,
                 }
                 score = _score_action(weights, features)
                 candidates.append((score, {"action": "sell_building", "cell_index": cell.index}, cell))
@@ -795,6 +874,7 @@ def decide_liquidation(
                 "cash_needed": cash_needed,
                 "action_sell_building": 0.0,
                 "action_mortgage": 1.0,
+                "positional_threat_self": threat_self,
             }
             score = _score_action(weights, features)
             candidates.append((score, {"action": "mortgage", "cell_index": cell.index}, cell))
@@ -828,6 +908,8 @@ def decide_jail_exit(state: GameState, player: Player, params: BotParams) -> str
     has_card = bool(player.get_out_of_jail_cards)
     danger = _max_opponent_rent(state, player.player_id) / max(1.0, player.money)
     start_cash = max(1, state.rules.starting_cash)
+    lost_income_if_stay = positional_threat_others(state, player.player_id) / start_cash
+    saved_risk_if_stay = positional_threat_self(state, player.player_id) / start_cash
 
     candidates: list[tuple[float, str]] = []
 
@@ -843,6 +925,8 @@ def decide_jail_exit(state: GameState, player: Player, params: BotParams) -> str
             "action_roll": 0.0,
             "danger_if_pay": danger,
             "danger_if_use_card": 0.0,
+            "lost_income_if_stay": 0.0,
+            "saved_risk_if_stay": 0.0,
         }
         candidates.append((_score_action(weights, features_pay), "pay"))
 
@@ -858,6 +942,8 @@ def decide_jail_exit(state: GameState, player: Player, params: BotParams) -> str
             "action_roll": 0.0,
             "danger_if_pay": 0.0,
             "danger_if_use_card": danger,
+            "lost_income_if_stay": 0.0,
+            "saved_risk_if_stay": 0.0,
         }
         candidates.append((_score_action(weights, features_card), "use_card"))
 
@@ -872,6 +958,8 @@ def decide_jail_exit(state: GameState, player: Player, params: BotParams) -> str
         "action_roll": 1.0,
         "danger_if_pay": 0.0,
         "danger_if_use_card": 0.0,
+        "lost_income_if_stay": lost_income_if_stay,
+        "saved_risk_if_stay": saved_risk_if_stay,
     }
     candidates.append((_score_action(weights, features_roll), "roll"))
 

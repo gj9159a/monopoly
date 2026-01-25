@@ -1,0 +1,146 @@
+from __future__ import annotations
+
+from monopoly.engine import create_engine
+from monopoly.features import (
+    denial_value,
+    hotel_scarcity,
+    house_scarcity,
+    positional_threat_self,
+    railroad_synergy,
+    utility_synergy,
+)
+from monopoly.params import BotParams, STAGES, decide_jail_exit
+
+
+def _clear_payments_in_range(state, start_pos: int) -> None:
+    board_size = len(state.board)
+    for roll in range(2, 13):
+        cell = state.board[(start_pos + roll) % board_size]
+        cell.owner_id = None
+        cell.mortgaged = False
+        cell.houses = 0
+        cell.hotels = 0
+        if cell.cell_type == "tax":
+            cell.tax_amount = 0
+
+
+def test_positional_threat_self_nonzero_and_mortgage_zero() -> None:
+    engine = create_engine(num_players=2, seed=1)
+    state = engine.state
+    player_id = 0
+    state.players[player_id].position = 0
+
+    _clear_payments_in_range(state, 0)
+    target = state.board[3]
+    target.owner_id = 1
+    target.houses = 1
+    target.hotels = 0
+    state.players[1].in_jail = False
+
+    threat = positional_threat_self(state, player_id)
+    assert threat > 0
+
+    target.mortgaged = True
+    threat_mortgaged = positional_threat_self(state, player_id)
+    assert threat_mortgaged == 0
+
+
+def test_denial_value_grows_when_bank_houses_low() -> None:
+    engine = create_engine(num_players=2, seed=1)
+    state = engine.state
+    for cell in state.board:
+        cell.houses = 0
+        cell.hotels = 0
+
+    low_denial = denial_value(1, 0, house_scarcity(state), hotel_scarcity(state))
+
+    remaining = max(0, state.rules.bank_houses - 1)
+    for cell in state.board:
+        if cell.cell_type != "property":
+            continue
+        if remaining <= 0:
+            break
+        cell.houses = 1
+        remaining -= 1
+
+    high_denial = denial_value(1, 0, house_scarcity(state), hotel_scarcity(state))
+    assert high_denial > low_denial
+
+
+def test_synergy_features() -> None:
+    engine = create_engine(num_players=2, seed=1)
+    state = engine.state
+    player_id = 0
+    railroads = [cell for cell in state.board if cell.cell_type == "railroad"]
+    railroads[0].owner_id = player_id
+    railroads[1].owner_id = player_id
+    assert railroad_synergy(state, player_id, railroads[2]) == 0.5
+
+    utilities = [cell for cell in state.board if cell.cell_type == "utility"]
+    utilities[0].owner_id = player_id
+    assert utility_synergy(state, player_id, utilities[1]) == 0.5
+
+    non_special = next(cell for cell in state.board if cell.cell_type == "property")
+    assert railroad_synergy(state, player_id, non_special) == 0.0
+    assert utility_synergy(state, player_id, non_special) == 0.0
+
+
+def test_jail_hr2_signals() -> None:
+    params = BotParams()
+    for stage in STAGES:
+        for feature in params.weights["jail"][stage]:
+            params.weights["jail"][stage][feature] = 0.0
+    params.weights["jail"]["early"]["lost_income_if_stay"] = -5.0
+    params.weights["jail"]["early"]["saved_risk_if_stay"] = 5.0
+
+    engine = create_engine(num_players=2, seed=1)
+    state = engine.state
+    player = state.players[0]
+    opponent = state.players[1]
+    player.money = state.rules.jail_fine + 100
+    player.jail_turns = 1
+    player.position = 0
+    opponent.position = 0
+
+    _clear_payments_in_range(state, player.position)
+    income_cell = state.board[3]
+    income_cell.owner_id = player.player_id
+    income_cell.houses = 1
+    income_cell.hotels = 0
+
+    decision = decide_jail_exit(state, player, params)
+    assert decision == "pay"
+
+    engine2 = create_engine(num_players=2, seed=1)
+    state2 = engine2.state
+    player2 = state2.players[0]
+    opponent2 = state2.players[1]
+    player2.money = state2.rules.jail_fine + 100
+    player2.jail_turns = 1
+    player2.position = 0
+    opponent2.position = 0
+
+    _clear_payments_in_range(state2, player2.position)
+    risk_cell = state2.board[3]
+    risk_cell.owner_id = opponent2.player_id
+    risk_cell.houses = 1
+    risk_cell.hotels = 0
+
+    decision2 = decide_jail_exit(state2, player2, params)
+    assert decision2 == "roll"
+
+
+def test_params_backward_compat() -> None:
+    params = BotParams.from_dict({"weights": {"auction": {"early": {"bias": 0.1}}}})
+    for feature in [
+        "positional_threat_self",
+        "positional_threat_others",
+        "railroad_synergy",
+        "utility_synergy",
+        "opponent_cash_min_norm",
+        "opponent_cash_pressure",
+    ]:
+        assert params.weights["auction"]["early"][feature] == 0.0
+    assert params.weights["build"]["early"]["denial_value"] == 0.0
+    assert params.weights["jail"]["early"]["lost_income_if_stay"] == 0.0
+    assert params.weights["mortgage"]["early"]["positional_threat_self"] == 0.0
