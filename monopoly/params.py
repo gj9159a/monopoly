@@ -84,6 +84,15 @@ class ParamSpec:
     value_type: type
 
 
+@dataclass(frozen=True)
+class ThinkingConfig:
+    enabled: bool = False
+    horizon_turns: int = 30
+    rollouts_per_action: int = 12
+    time_budget_ms: int = 0
+    workers: int = 1
+
+
 def _weight_key(decision: str, stage: str, feature: str) -> str:
     return f"{decision}_{stage}_{feature}"
 
@@ -206,14 +215,24 @@ class BotParams:
     cash_buffer_base: int = 150
     cash_buffer_per_house: int = 20
     max_bid_fraction: float = 0.95
+    thinking: ThinkingConfig = field(default_factory=ThinkingConfig)
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        payload = {
             "cash_buffer_base": self.cash_buffer_base,
             "cash_buffer_per_house": self.cash_buffer_per_house,
             "max_bid_fraction": self.max_bid_fraction,
             "weights": self.weights,
         }
+        if self.thinking.enabled or self.thinking != ThinkingConfig():
+            payload["thinking"] = {
+                "enabled": self.thinking.enabled,
+                "horizon_turns": self.thinking.horizon_turns,
+                "rollouts_per_action": self.thinking.rollouts_per_action,
+                "time_budget_ms": self.thinking.time_budget_ms,
+                "workers": self.thinking.workers,
+            }
+        return payload
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "BotParams":
@@ -238,6 +257,20 @@ class BotParams:
                 decision, stage, feature = _WEIGHT_KEYS[key]
                 weights[decision][stage][feature] = float(value)
 
+        thinking_data = normalized.get("thinking")
+        if isinstance(thinking_data, dict):
+            thinking = ThinkingConfig(
+                enabled=bool(thinking_data.get("enabled", False)),
+                horizon_turns=int(thinking_data.get("horizon_turns", ThinkingConfig().horizon_turns)),
+                rollouts_per_action=int(
+                    thinking_data.get("rollouts_per_action", ThinkingConfig().rollouts_per_action)
+                ),
+                time_budget_ms=int(thinking_data.get("time_budget_ms", ThinkingConfig().time_budget_ms)),
+                workers=int(thinking_data.get("workers", ThinkingConfig().workers)),
+            )
+        else:
+            thinking = ThinkingConfig()
+
         cash_buffer_base = int(normalized.get("cash_buffer_base", cls.cash_buffer_base))
         cash_buffer_per_house = int(
             normalized.get("cash_buffer_per_house", cls.cash_buffer_per_house)
@@ -249,6 +282,7 @@ class BotParams:
             cash_buffer_base=cash_buffer_base,
             cash_buffer_per_house=cash_buffer_per_house,
             max_bid_fraction=max_bid_fraction,
+            thinking=thinking,
         )
 
     def to_json(self, path: Path) -> None:
@@ -264,6 +298,15 @@ class BotParams:
     @classmethod
     def from_yaml(cls, path: Path) -> "BotParams":
         return cls.from_dict(yaml.safe_load(path.read_text(encoding="utf-8")))
+
+    def with_thinking(self, config: ThinkingConfig) -> "BotParams":
+        return BotParams(
+            weights=self.weights,
+            cash_buffer_base=self.cash_buffer_base,
+            cash_buffer_per_house=self.cash_buffer_per_house,
+            max_bid_fraction=self.max_bid_fraction,
+            thinking=config,
+        )
 
 
 BASE_FIELDS = {"cash_buffer_base", "cash_buffer_per_house", "max_bid_fraction"}

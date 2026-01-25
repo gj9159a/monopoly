@@ -17,7 +17,7 @@ import yaml
 
 from .engine import create_engine
 from .io_utils import read_json, tail_lines, write_json_atomic
-from .params import BotParams, load_params
+from .params import BotParams, ThinkingConfig, load_params
 from .run_utils import latest_run, list_runs
 from .status import read_status
 
@@ -330,11 +330,24 @@ def _build_center_panel(
 
     thinking_html = ""
     if thinking and thinking.get("thinking"):
-        thinking_html = (
-            f"<div class='center-meta'>Думает… {thinking.get('decision_context','')}</div>"
-            f"<div class='center-meta'>Rollouts: {thinking.get('rollouts_done',0)} | "
-            f"Time left: {thinking.get('time_left_sec',0):.2f}s</div>"
-        )
+        decision_ctx = thinking.get("decision_context", "")
+        if "ms" in thinking:
+            ms = float(thinking.get("ms", 0.0))
+            candidates = int(thinking.get("candidates", 0))
+            rollouts = int(thinking.get("rollouts", 0))
+            best_score = float(thinking.get("best_score", 0.0))
+            thinking_html = (
+                f"<div class='center-meta'>Думал: {ms:.0f} ms · "
+                f"Канд.: {candidates} · Rollouts: {rollouts}</div>"
+                f"<div class='center-meta'>Контекст: {decision_ctx} · "
+                f"Best: {best_score:.3f}</div>"
+            )
+        else:
+            thinking_html = (
+                f"<div class='center-meta'>Думает… {decision_ctx}</div>"
+                f"<div class='center-meta'>Rollouts: {thinking.get('rollouts_done',0)} | "
+                f"Time left: {thinking.get('time_left_sec',0):.2f}s</div>"
+            )
 
     events_tail = event_log[-30:]
     events_html = "".join(f"<div class='event-line'>{_event_msg(ev)}</div>" for ev in events_tail)
@@ -1072,6 +1085,36 @@ def render_game_mode(cards_status: dict[str, Any] | None = None) -> None:
             value="",
             placeholder="trained_params.json",
         )
+        st.subheader("Thinking-mode")
+        thinking_enabled = st.checkbox("Включить thinking-mode", value=False)
+        thinking_workers = st.number_input(
+            "Thinking workers",
+            min_value=1,
+            value=_default_workers(),
+            step=1,
+            disabled=not thinking_enabled,
+        )
+        thinking_horizon = st.number_input(
+            "Horizon turns",
+            min_value=1,
+            value=30,
+            step=1,
+            disabled=not thinking_enabled,
+        )
+        thinking_rollouts = st.number_input(
+            "Rollouts per action",
+            min_value=1,
+            value=12,
+            step=1,
+            disabled=not thinking_enabled,
+        )
+        thinking_time_ms = st.number_input(
+            "Time budget (ms, 0 = off)",
+            min_value=0,
+            value=0,
+            step=100,
+            disabled=not thinking_enabled,
+        )
         new_game = st.button("Новая игра", type="primary")
         step_once = st.button("Шаг")
         step_ten = st.button("+10 шагов")
@@ -1085,6 +1128,17 @@ def render_game_mode(cards_status: dict[str, Any] | None = None) -> None:
                 bot_params = load_params(params_path)
             except Exception as exc:
                 st.warning(f"Не удалось загрузить параметры: {exc}. Использую дефолтные.")
+        if thinking_enabled:
+            config = ThinkingConfig(
+                enabled=True,
+                horizon_turns=int(thinking_horizon),
+                rollouts_per_action=int(thinking_rollouts),
+                time_budget_ms=int(thinking_time_ms),
+                workers=int(thinking_workers),
+            )
+            bot_params = bot_params.with_thinking(config)
+        else:
+            bot_params = bot_params.with_thinking(ThinkingConfig())
         st.session_state.engine = create_engine(num_players, seed, bot_params=bot_params)
         st.session_state.run_info = ""
 
@@ -1111,9 +1165,27 @@ def render_game_mode(cards_status: dict[str, Any] | None = None) -> None:
 
     unknown_groups = _unknown_group_ids(state.board)
     show_group_id = bool(st.session_state.get("show_group_id", False))
+    thinking_info = None
+    if hasattr(engine, "bots") and engine.bots:
+        try:
+            bot = engine.bots[state.current_player]
+            last = getattr(bot, "last_thinking", None)
+            if isinstance(last, dict) and last:
+                thinking_info = {
+                    "thinking": True,
+                    "decision_context": last.get("decision_type", ""),
+                    "ms": last.get("ms", 0.0),
+                    "candidates": last.get("candidates", 0),
+                    "rollouts": last.get("rollouts", 0),
+                    "best_score": last.get("best_score", 0.0),
+                }
+        except Exception:
+            thinking_info = None
+
     center_html = _build_center_panel(
         state,
         mode="game",
+        thinking=thinking_info,
         cards_status=cards_status,
         unknown_groups=unknown_groups,
     )

@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import argparse
+import os
 from pathlib import Path
 from statistics import mean
 
-from .params import BotParams, load_params
+from .params import BotParams, ThinkingConfig, load_params
 from .train import (
     build_eval_cases,
     build_opponent_pool,
@@ -141,6 +142,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--league-dir", type=Path, default=Path("monopoly/data/league"))
     parser.add_argument("--opponents", type=str, choices=["baseline", "league", "mixed"], default="mixed")
     parser.add_argument("--cand-seats", type=str, choices=["all", "rotate"], default="rotate")
+    parser.add_argument("--thinking", action="store_true", help="Включить thinking-mode для кандидата")
+    parser.add_argument("--thinking-workers", type=int, default=max(1, (os.cpu_count() or 1) - 1))
+    parser.add_argument("--thinking-horizon", type=int, default=30)
+    parser.add_argument("--thinking-rollouts", type=int, default=12)
+    parser.add_argument("--thinking-time-ms", type=int, default=0)
     return parser
 
 
@@ -152,6 +158,19 @@ def main(argv: list[str] | None = None) -> None:
 
     candidate = load_params(args.candidate)
     baseline = load_params(args.baseline)
+    if args.thinking:
+        candidate = candidate.with_thinking(
+            ThinkingConfig(
+                enabled=True,
+                horizon_turns=int(args.thinking_horizon),
+                rollouts_per_action=int(args.thinking_rollouts),
+                time_budget_ms=int(args.thinking_time_ms),
+                workers=int(args.thinking_workers),
+            )
+        )
+    else:
+        candidate = candidate.with_thinking(ThinkingConfig())
+    baseline = baseline.with_thinking(ThinkingConfig())
 
     result = bench(
         candidate=candidate,

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from .models import Cell, GameState, Player
@@ -13,14 +13,38 @@ from .params import (
     decide_liquidation,
     estimate_asset_value,
 )
+from .thinking import choose_action
 
 
-@dataclass(frozen=True)
+@dataclass
 class Bot:
     params: BotParams
+    last_thinking: dict[str, Any] = field(default_factory=dict)
+    _thinking_cache: dict[str, float] = field(default_factory=dict, repr=False)
 
     def decide(self, state: GameState, context: dict[str, Any]) -> dict[str, Any]:
         decision_type = context.get("type")
+        if self.params.thinking.enabled and decision_type in {
+            "auction_bid",
+            "jail_decision",
+            "economy_phase",
+            "liquidation",
+        }:
+            action, stats = choose_action(
+                state,
+                context,
+                self.params,
+                self.params.thinking,
+                cache=self._thinking_cache,
+            )
+            self.last_thinking = {
+                "decision_type": stats.decision_type,
+                "ms": stats.ms,
+                "candidates": stats.candidates,
+                "rollouts": stats.rollouts,
+                "best_score": stats.best_score,
+            }
+            return action
         if decision_type == "auction_bid":
             return self._decide_auction_bid(state, context)
         if decision_type == "jail_decision":
@@ -65,6 +89,39 @@ class Bot:
         return {"actions": actions}
 
     def prioritize_mortgage(self, cells: list[Cell], state: GameState, player: Player) -> list[Cell]:
+        if self.params.thinking.enabled and cells:
+            context = {"type": "mortgage", "player_id": player.player_id, "cells": cells}
+            action, stats = choose_action(
+                state,
+                context,
+                self.params,
+                self.params.thinking,
+                cache=self._thinking_cache,
+            )
+            self.last_thinking = {
+                "decision_type": stats.decision_type,
+                "ms": stats.ms,
+                "candidates": stats.candidates,
+                "rollouts": stats.rollouts,
+                "best_score": stats.best_score,
+            }
+            order = action.get("order")
+            if isinstance(order, list) and order:
+                ordered = []
+                index_map = {cell.index: cell for cell in cells}
+                for idx in order:
+                    cell = index_map.get(int(idx))
+                    if cell is not None and cell not in ordered:
+                        ordered.append(cell)
+                rest = [cell for cell in cells if cell not in ordered]
+                rest.sort(key=lambda cell: estimate_asset_value(state, player, cell, self.params))
+                return ordered + rest
+            chosen_index = action.get("cell_index")
+            if chosen_index is not None:
+                preferred = [cell for cell in cells if cell.index == int(chosen_index)]
+                rest = [cell for cell in cells if cell.index != int(chosen_index)]
+                rest.sort(key=lambda cell: estimate_asset_value(state, player, cell, self.params))
+                return preferred + rest
         return sorted(
             cells,
             key=lambda cell: estimate_asset_value(state, player, cell, self.params),
