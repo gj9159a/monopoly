@@ -41,10 +41,15 @@ def load_rules(path: Path) -> Rules:
         "interest_rate",
         "bank_houses",
         "bank_hotels",
+        "auction_increments",
     ]
     for key in required:
         if key not in data:
             raise ValueError(f"В rules.yaml нет ключа '{key}'")
+    increments_raw = data.get("auction_increments", [])
+    if not isinstance(increments_raw, list) or not increments_raw:
+        raise ValueError("auction_increments должен быть непустым списком")
+    increments = [int(value) for value in increments_raw]
     return Rules(
         hr1_always_auction=bool(data["hr1_always_auction"]),
         hr2_no_rent_in_jail=bool(data["hr2_no_rent_in_jail"]),
@@ -56,6 +61,7 @@ def load_rules(path: Path) -> Rules:
         interest_rate=float(data["interest_rate"]),
         bank_houses=int(data["bank_houses"]),
         bank_hotels=int(data["bank_hotels"]),
+        auction_increments=increments,
     )
 
 

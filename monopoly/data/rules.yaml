@@ -8,3 +8,4 @@ starting_cash: 1500
 interest_rate: 0.1
 bank_houses: 32
 bank_hotels: 12
+auction_increments: [5, 20, 50]

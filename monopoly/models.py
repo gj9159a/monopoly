@@ -40,6 +40,7 @@ class Rules:
     interest_rate: float
     bank_houses: int
     bank_hotels: int
+    auction_increments: list[int]
 
 
 @dataclass(slots=True)

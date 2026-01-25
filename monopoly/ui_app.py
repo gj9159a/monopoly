@@ -455,6 +455,7 @@ def _build_center_panel(
           <div class='center-meta'>{legend_badges}</div>
           <div class='center-meta'>{legend_icons}</div>
           <div class='center-meta'>Периметр = 40 клеток, центр 9×9 под панель.</div>
+          <div class='center-meta'>Шаг аукциона: 5/20/50 (адаптивно).</div>
           <div class='center-meta'>Офиц. тексты: <span class='{official_class}'>{official_texts}</span></div>
           <div class='center-meta'>Управление — кнопки под доской.</div>
         </details>

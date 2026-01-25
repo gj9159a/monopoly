@@ -1191,7 +1191,11 @@ class Engine:
         participants = [p.player_id for p in state.players if not p.bankrupt]
         active = participants[:]
         current_price = 0
-        min_increment = 1
+        increments = getattr(state.rules, "auction_increments", None)
+        if not increments:
+            increments = [1]
+        increments = sorted({int(value) for value in increments if int(value) > 0})
+        min_increment = increments[0] if increments else 1
         last_bidder: int | None = None
 
         events.append(
@@ -1230,6 +1234,7 @@ class Engine:
                         )
                         active.remove(player_id)
                     else:
+                        increment = bid - current_price
                         current_price = bid
                         last_bidder = player_id
                         events.append(
@@ -1237,8 +1242,8 @@ class Engine:
                                 type="AUCTION_BID",
                                 turn_index=turn_index,
                                 player_id=player_id,
-                                msg_ru=f"{player.name} сделал ставку {bid}",
-                                payload={"bid": bid},
+                                msg_ru=f"{player.name} повышает до {bid} (+{increment})",
+                                payload={"bid": bid, "increment": increment},
                             )
                         )
                 else:

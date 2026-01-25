@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from monopoly.engine import create_engine
+from monopoly.params import BotParams
 
 
 @dataclass
@@ -18,14 +19,23 @@ class FixedRNG:
         return value
 
 
-def _engine_with_rng(values: list[int], num_players: int = 2):
-    engine = create_engine(num_players=num_players, seed=1)
+def _engine_with_rng(values: list[int], num_players: int = 2, bot_params: BotParams | None = None):
+    engine = create_engine(num_players=num_players, seed=1, bot_params=bot_params)
     engine.state.rng = FixedRNG(values)
     return engine
 
 
+def _aggressive_auction_params() -> BotParams:
+    return BotParams.from_dict(
+        {
+            "auction_early_cash_after_bid": -1.0,
+            "auction_early_liquidity_ratio": -0.5,
+        }
+    )
+
+
 def test_hr1_always_auction():
-    engine = _engine_with_rng([1, 2])
+    engine = _engine_with_rng([1, 2], bot_params=_aggressive_auction_params())
     engine.state.players[0].position = 0
     cell = engine.state.board[3]
     cell.owner_id = None

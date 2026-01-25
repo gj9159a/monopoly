@@ -6,6 +6,7 @@ from typing import Any
 from .models import Cell, GameState, Player
 from .params import (
     BotParams,
+    choose_auction_bid,
     compute_cash_buffer,
     decide_auction_bid,
     decide_build_actions,
@@ -67,8 +68,11 @@ class Bot:
         cell: Cell = context["cell"]
         current_price = int(context["current_price"])
         min_increment = int(context["min_increment"])
-
-        bid = decide_auction_bid(state, player, cell, current_price, min_increment, self.params)
+        increments = getattr(state.rules, "auction_increments", None)
+        if not increments:
+            increments = [min_increment]
+        target_max = decide_auction_bid(state, player, cell, current_price, min_increment, self.params)
+        bid = choose_auction_bid(int(target_max), current_price, list(increments))
         if bid <= 0:
             return {"action": "pass"}
         return {"action": "bid", "bid": bid}

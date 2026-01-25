@@ -509,6 +509,56 @@ def _score_action(weights: dict[str, float], features: dict[str, float]) -> floa
     return sum(weights.get(name, 0.0) * value for name, value in features.items())
 
 
+def _normalize_auction_increments(increments: list[int] | None) -> list[int]:
+    if not increments:
+        return [1]
+    cleaned = sorted({int(value) for value in increments if int(value) > 0})
+    return cleaned or [1]
+
+
+def auction_increment_for_remaining(remaining: int, increments: list[int]) -> int:
+    incs = _normalize_auction_increments(increments)
+    if not incs:
+        return 0
+    if len(incs) == 1:
+        step = incs[0]
+        return step if remaining >= step * 2 else 0
+    if len(incs) == 2:
+        small, large = incs[0], incs[1]
+        if remaining >= large * 2:
+            return large
+        if remaining >= small * 2:
+            return small
+        return 0
+    small = incs[0]
+    mid = incs[len(incs) // 2]
+    large = incs[-1]
+    if remaining >= large * 2:
+        return large
+    if remaining >= mid * 2:
+        return mid
+    if remaining >= small * 2:
+        return small
+    return 0
+
+
+def choose_auction_bid(
+    target_max: int,
+    current_price: int,
+    increments: list[int],
+) -> int:
+    if target_max <= 0 or current_price >= target_max:
+        return 0
+    remaining = target_max - current_price
+    step = auction_increment_for_remaining(remaining, increments)
+    if step <= 0:
+        return 0
+    bid = current_price + step
+    if bid > target_max:
+        return 0
+    return bid
+
+
 def decide_auction_bid(
     state: GameState,
     player: Player,

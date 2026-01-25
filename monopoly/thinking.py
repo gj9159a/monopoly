@@ -11,6 +11,7 @@ from .models import GameState, Player, Cell
 from .params import (
     BotParams,
     ThinkingConfig,
+    choose_auction_bid,
     compute_cash_buffer,
     decide_auction_bid,
     decide_build_actions,
@@ -47,7 +48,11 @@ def fast_decide(state: GameState, context: dict[str, Any], params: BotParams) ->
         cell = context["cell"]
         current_price = int(context["current_price"])
         min_increment = int(context["min_increment"])
-        bid = decide_auction_bid(state, player, cell, current_price, min_increment, params)
+        increments = getattr(state.rules, "auction_increments", None)
+        if not increments:
+            increments = [min_increment]
+        target_max = decide_auction_bid(state, player, cell, current_price, min_increment, params)
+        bid = choose_auction_bid(int(target_max), current_price, list(increments))
         if bid <= 0:
             return {"action": "pass"}
         return {"action": "bid", "bid": bid}
@@ -265,26 +270,21 @@ def _auction_candidates(
     current_price: int,
     min_increment: int,
 ) -> list[dict[str, Any]]:
-    base_bid = decide_auction_bid(state, player, cell, current_price, min_increment, params)
+    increments = getattr(state.rules, "auction_increments", None)
+    if not increments:
+        increments = [min_increment]
+    target_max = decide_auction_bid(state, player, cell, current_price, min_increment, params)
     buffer = compute_cash_buffer(state, player, params)
     max_cash = max(0, player.money - buffer)
-    max_bid = min(player.money, int(max_cash * params.max_bid_fraction))
-    min_bid = current_price + min_increment
+    max_bid = min(player.money, int(max_cash * params.max_bid_fraction), int(target_max))
+    min_bid = current_price + min(increments) if increments else current_price + min_increment
     if max_bid < min_bid:
         return [{"action": "pass"}]
 
-    factors = [0.0, 0.25, 0.5, 0.75, 0.9, 1.0]
-    bids = [min_bid]
-    for factor in factors:
-        bid = int(min_bid + (max_bid - min_bid) * factor)
-        bids.append(min(max_bid, max(min_bid, bid)))
-    if base_bid > 0:
-        bids.append(base_bid)
-    bids.append(max_bid)
-
     options = [{"action": "pass"}]
-    for bid in bids:
-        if bid <= 0:
+    for inc in sorted({int(value) for value in increments if int(value) > 0}):
+        bid = current_price + inc
+        if bid <= 0 or bid > max_bid:
             continue
         options.append({"action": "bid", "bid": int(bid)})
     return _dedupe_actions(options)
