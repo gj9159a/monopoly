@@ -79,7 +79,7 @@ python -m pytest -k smoke
 
 Оценка кандидата идёт против пула оппонентов:
 - baseline: `monopoly/data/params_baseline.json`
-- league: `monopoly/data/league/*.json` (например `last_best.json`, `top_k.json`)
+- league: `monopoly/data/league/index.json` + json-файлы параметров, перечисленные в index (TOP-16)
 
 Быстрый прогон (small):
 
@@ -164,20 +164,20 @@ python -m monopoly.bench --games 200 --seeds-file monopoly/data/seeds.txt --cand
 
 ## Лига и прогресс
 
-Добавление лучшей конфигурации в лигу:
+Добавление лучшей конфигурации в лигу (TOP-16 по fitness):
 
 ```bash
-python -m monopoly.league add --params trained_params.json --name best_YYYYMMDD_HHMM --meta "iter=50; fitness=..." --fitness 0.123
+python -m monopoly.league add --params trained_params.json --name best_YYYYMMDD_HHMM --meta "iter=50; fitness=..." --fitness 0.123 --top-k 16
 ```
 
 Список лиги и очистка старых:
 
 ```bash
 python -m monopoly.league list
-python -m monopoly.league prune --keep 20
+python -m monopoly.league prune --top-k 16
 ```
 
-Оценка прогресса (последние 5 из лиги vs baseline и mix):
+Оценка прогресса (топ-5 из лиги vs baseline и mix):
 
 ```bash
 python -m monopoly.progress --league-dir monopoly/data/league --baseline monopoly/data/params_baseline.json --games 200 --seed 123
@@ -205,7 +205,9 @@ python -m monopoly.progress --league-dir monopoly/data/league --baseline monopol
 - `monopoly/data/cards_texts_ru_official.yaml` — опциональный файл с официальными текстами (id -> text_ru), добавьте его вручную на основе шаблона (файл в .gitignore).
 - `monopoly/data/rules.yaml` — флаги правил и базовые параметры (HR1/HR2/штраф тюрьмы и т.д.).
 - `monopoly/data/params_baseline.json` — baseline параметры бота.
-- `monopoly/data/league/*.json` — пул лучших параметров для self-play.
+- `monopoly/data/league/index.json` — индекс лиги (TOP-16 по fitness, ранги 1..N).
+- `monopoly/data/league/*.json` — параметры ботов из index.json.
+- `monopoly/data/league/last_best.json`, `top_k.json` — legacy/экспорт, не используются в логике.
 - `monopoly/data/seeds.txt` — фиксированный набор сидов для бенчмарка/прогресса.
 
 ## Реализованные правила

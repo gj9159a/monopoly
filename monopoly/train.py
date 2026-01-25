@@ -15,7 +15,7 @@ from typing import Iterable, Sequence
 
 from .engine import create_engine
 from .models import GameState
-from .league import add_to_league
+from .league import add_to_league, load_index, resolve_entry_path
 from .params import (
     BotParams,
     PARAM_SPECS,
@@ -131,15 +131,16 @@ def play_game(
 
 
 def load_league(league_dir: Path) -> list[BotParams]:
-    if not league_dir.exists():
-        return []
-    files = sorted([
-        path
-        for path in league_dir.iterdir()
-        if path.suffix.lower() in {".json", ".yml", ".yaml"}
-    ])
+    index = load_index(league_dir)
+    items = index.get("items", [])
+    top_k = int(index.get("top_k", 16) or 16)
+    if top_k > 0:
+        items = items[:top_k]
     params_list: list[BotParams] = []
-    for path in files:
+    for entry in items:
+        path = resolve_entry_path(entry, league_dir)
+        if not path.exists():
+            continue
         params_list.append(load_params(path))
     return params_list
 
@@ -584,21 +585,21 @@ def main(argv: list[str] | None = None) -> None:
     avg_net = mean(net_worths) if net_worths else 0.0
     print(f"Quick bench vs baseline (20 игр): win_rate={win_rate:.3f}, avg_net_worth={avg_net:.1f}")
 
-    if args.league_auto_add:
+    if args.league_auto_add and args.opponents in {"mixed", "league"}:
         timestamp = datetime.now().strftime("%Y%m%d_%H%M")
-        name = f"best_{timestamp}"
         meta = (
             f"iter={args.iters}; best_fitness={best_fitness:.4f}; "
             f"baseline_bench=win_rate:{win_rate:.3f},net:{avg_net:.1f}"
         )
-        entry = add_to_league(
-            params_path=args.out,
-            name=name,
-            meta=meta,
+        meta_payload = {"name": f"best_{timestamp}", "note": meta}
+        added, changed_topk, rank = add_to_league(
+            params=params,
             fitness=best_fitness,
+            meta=meta_payload,
             league_dir=args.league_dir,
+            top_k=16,
         )
-        print(f"League auto-add: {entry['name']} -> {entry['path']}")
+        print(f"League auto-add: added={added}, rank={rank}, changed_topk={changed_topk}")
 
 
 if __name__ == "__main__":

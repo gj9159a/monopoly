@@ -1,48 +1,59 @@
 from __future__ import annotations
 
-import shutil
 from pathlib import Path
-from uuid import uuid4
 
-from monopoly.league import add_to_league, load_index, prune_entries
-from monopoly.params import BotParams, save_params
-
-
-def _cleanup_tmp(path: Path) -> None:
-    shutil.rmtree(path, ignore_errors=True)
-    try:
-        path.parent.rmdir()
-    except OSError:
-        pass
+from monopoly.league import add_to_league, get_top1, load_index, sample_from_league
+from monopoly.params import BotParams
 
 
-def _local_tmp() -> Path:
-    base = Path(__file__).resolve().parent / "_tmp"
-    base.mkdir(exist_ok=True)
-    path = base / uuid4().hex
-    path.mkdir()
-    return path
+def _make_params(seed: int) -> BotParams:
+    return BotParams(cash_buffer_base=150 + seed, cash_buffer_per_house=20 + seed)
 
 
-def test_league_index_roundtrip(tmp_path: Path) -> None:
+def test_league_sorted_and_ranked(tmp_path: Path) -> None:
     league_dir = tmp_path / "league"
     league_dir.mkdir()
 
-    params_a = tmp_path / "a.json"
-    params_b = tmp_path / "b.json"
-    save_params(BotParams(), params_a)
-    save_params(BotParams(), params_b)
+    fitness_values = [0.2, 1.5, 0.9, -0.1, 0.7]
+    for idx, fitness in enumerate(fitness_values):
+        params = _make_params(idx)
+        add_to_league(params, fitness, {"name": f"bot_{idx}"}, league_dir)
 
-    add_to_league(params_a, "first", "iter=1", 0.1, league_dir)
-    add_to_league(params_b, "second", "iter=2", 0.2, league_dir)
+    index = load_index(league_dir)
+    items = index["items"]
+    assert [entry["fitness"] for entry in items] == sorted(fitness_values, reverse=True)
+    assert [entry["rank"] for entry in items] == list(range(1, len(items) + 1))
 
-    entries = load_index(league_dir)
-    assert len(entries) == 2
-    assert (league_dir / "first.json").exists()
-    assert (league_dir / "second.json").exists()
 
-    prune_entries(league_dir, keep=1)
-    entries_after = load_index(league_dir)
-    assert len(entries_after) == 1
-    assert not (league_dir / "first.json").exists()
-    assert (league_dir / "second.json").exists()
+def test_league_prune_top16(tmp_path: Path) -> None:
+    league_dir = tmp_path / "league"
+    league_dir.mkdir()
+
+    fitness_values = list(range(20))
+    for idx, fitness in enumerate(fitness_values):
+        params = _make_params(idx)
+        add_to_league(params, float(fitness), {"name": f"bot_{idx}"}, league_dir, top_k=16)
+
+    index = load_index(league_dir)
+    items = index["items"]
+    assert len(items) == 16
+    expected = sorted(fitness_values, reverse=True)[:16]
+    assert [entry["fitness"] for entry in items] == expected
+
+
+def test_sample_unique_excluding_top1(tmp_path: Path) -> None:
+    league_dir = tmp_path / "league"
+    league_dir.mkdir()
+
+    for idx in range(8):
+        params = _make_params(idx)
+        add_to_league(params, float(idx), {"name": f"bot_{idx}"}, league_dir)
+
+    top1 = get_top1(league_dir)
+    assert top1 is not None
+    exclude = {str(top1.get("hash"))}
+    sample = sample_from_league(5, league_dir, exclude_hashes=exclude)
+    hashes = [str(entry.get("hash")) for entry in sample]
+    assert len(sample) == 5
+    assert len(hashes) == len(set(hashes))
+    assert not exclude.intersection(hashes)

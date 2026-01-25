@@ -18,6 +18,7 @@ import yaml
 from .engine import create_engine
 from .io_utils import read_json, tail_lines, write_json_atomic
 from .params import BotParams, ThinkingConfig, load_params
+from .roster import BOT_NAME_BASELINE, build_roster_all_top1, build_roster_top1_plus_random
 from .run_utils import latest_run, list_runs
 from .status import read_status
 
@@ -1109,9 +1110,19 @@ def render_game_mode(cards_status: dict[str, Any] | None = None) -> None:
         st.header("Управление")
         num_players = st.slider("Число ботов", min_value=2, max_value=6, value=4, step=1)
         seed = st.number_input("Seed", min_value=0, max_value=999999, value=42, step=1)
-        params_path = st.text_input(
-            "Путь к параметрам бота (json/yaml)",
-            value="",
+        st.subheader("Состав ботов")
+        roster_mode = st.radio(
+            "Режим состава",
+            ["Все TOP-1", "TOP-1 + 5 случайных из лиги", "Baseline/кастом"],
+            index=0,
+        )
+        league_dir = st.text_input(
+            "League dir",
+            value=str(ROOT_DIR / "monopoly" / "data" / "league"),
+        )
+        baseline_path = st.text_input(
+            "Путь к baseline/кастом параметрам (json/yaml)",
+            value=str(ROOT_DIR / "monopoly" / "data" / "params_baseline.json"),
             placeholder="trained_params.json",
         )
         st.subheader("Thinking-mode")
@@ -1159,12 +1170,31 @@ def render_game_mode(cards_status: dict[str, Any] | None = None) -> None:
         run_to_end = st.button("До конца игры")
 
     if "engine" not in st.session_state or new_game:
-        bot_params = BotParams()
-        if params_path:
+        baseline_params = BotParams()
+        if baseline_path:
             try:
-                bot_params = load_params(params_path)
+                baseline_params = load_params(baseline_path)
             except Exception as exc:
                 st.warning(f"Не удалось загрузить параметры: {exc}. Использую дефолтные.")
+                baseline_params = BotParams()
+
+        league_dir_path = Path(league_dir) if league_dir else (ROOT_DIR / "monopoly" / "data" / "league")
+        if roster_mode == "Все TOP-1":
+            roster_params, roster_names = build_roster_all_top1(
+                league_dir_path,
+                baseline_params,
+                num_players,
+            )
+        elif roster_mode == "TOP-1 + 5 случайных из лиги":
+            roster_params, roster_names = build_roster_top1_plus_random(
+                league_dir_path,
+                baseline_params,
+                num_players,
+            )
+        else:
+            roster_params = [baseline_params] * num_players
+            roster_names = [BOT_NAME_BASELINE] * num_players
+
         if thinking_enabled:
             rollouts_value = int(thinking_rollouts)
             if rollouts_value <= 0:
@@ -1178,10 +1208,12 @@ def render_game_mode(cards_status: dict[str, Any] | None = None) -> None:
                 cache_enabled=bool(thinking_cache),
                 cache_size=int(thinking_cache_size),
             )
-            bot_params = bot_params.with_thinking(config)
+            roster_params = [params.with_thinking(config) for params in roster_params]
         else:
-            bot_params = bot_params.with_thinking(ThinkingConfig())
-        st.session_state.engine = create_engine(num_players, seed, bot_params=bot_params)
+            roster_params = [params.with_thinking(ThinkingConfig()) for params in roster_params]
+        st.session_state.engine = create_engine(num_players, seed, bot_params=roster_params)
+        for player, name in zip(st.session_state.engine.state.players, roster_names, strict=False):
+            player.name = name
         st.session_state.run_info = ""
 
     if step_once or step_ten or step_hundred:

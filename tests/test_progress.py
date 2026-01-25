@@ -35,7 +35,7 @@ def test_progress_smoke() -> None:
     candidate_path = tmp_path / "candidate.json"
     save_params(BotParams(), baseline_path)
     save_params(BotParams(), candidate_path)
-    add_to_league(candidate_path, "cand", "iter=1", 0.1, league_dir)
+    add_to_league(candidate_path, 0.1, {"name": "cand", "note": "iter=1"}, league_dir)
 
     seeds_file = tmp_path / "seeds.txt"
     seeds_file.write_text("1\n2\n", encoding="utf-8")

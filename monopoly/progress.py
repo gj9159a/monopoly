@@ -4,29 +4,18 @@ import argparse
 from pathlib import Path
 
 from .bench import bench, load_seed_pack
-from .league import load_index
+from .league import load_index, resolve_entry_path
 from .params import BotParams, load_params
 
 
-def _resolve_entry_path(entry: dict[str, object], league_dir: Path) -> Path:
-    raw = Path(str(entry.get("path", "")))
-    if raw.is_absolute():
-        return raw
-    candidate = Path.cwd() / raw
-    if candidate.exists():
-        return candidate
-    return (league_dir / raw).resolve()
-
-
 def _load_league_candidates(league_dir: Path, keep: int) -> list[tuple[str, Path]]:
-    entries = load_index(league_dir)
-    if entries:
-        selected = entries[-keep:] if keep > 0 else entries
-        return [(entry["name"], _resolve_entry_path(entry, league_dir)) for entry in selected]
-    # fallback: scan directory if index отсутствует
-    files = sorted([path for path in league_dir.glob("*.json") if path.name != "index.json"])
-    selected = files[-keep:] if keep > 0 else files
-    return [(path.stem, path) for path in selected]
+    index = load_index(league_dir)
+    items = index.get("items", [])
+    if keep > 0:
+        selected = items[:keep]
+    else:
+        selected = items
+    return [(entry["name"], resolve_entry_path(entry, league_dir)) for entry in selected]
 
 
 def _load_params_safe(path: Path) -> BotParams:

@@ -8,6 +8,7 @@ from pathlib import Path
 from uuid import uuid4
 
 from monopoly.engine import create_engine
+from monopoly.league import add_to_league
 from monopoly.params import BotParams, ThinkingConfig, decide_build_actions, save_params
 from monopoly.train import (
     LAST_TRAIN_THINKING_USED,
@@ -66,8 +67,8 @@ def test_eval_determinism() -> None:
     league_dir.mkdir()
 
     _write_params(tmp_path / "baseline.json", baseline)
-    _write_params(league_dir / "l1.json", baseline)
-    _write_params(league_dir / "l2.json", baseline)
+    add_to_league(BotParams(cash_buffer_base=151), 0.1, {"name": "l1"}, league_dir)
+    add_to_league(BotParams(cash_buffer_base=152), 0.2, {"name": "l2"}, league_dir)
 
     opponents_pool = build_opponent_pool("mixed", baseline, load_league(league_dir))
     seeds = [1, 2, 3]
@@ -135,7 +136,7 @@ def test_train_cli_smoke() -> None:
     league_dir = tmp_path / "league"
     league_dir.mkdir()
     _write_params(baseline_path, BotParams())
-    _write_params(league_dir / "l1.json", BotParams())
+    add_to_league(BotParams(cash_buffer_base=151), 0.1, {"name": "l1"}, league_dir)
 
     out_path = tmp_path / "trained.json"
     checkpoint_dir = tmp_path / "runs"
@@ -194,7 +195,7 @@ def test_cem_determinism() -> None:
     league_dir = tmp_path / "league"
     league_dir.mkdir()
     _write_params(baseline_path, baseline)
-    _write_params(league_dir / "l1.json", baseline)
+    add_to_league(BotParams(cash_buffer_base=151), 0.1, {"name": "l1"}, league_dir)
 
     out_a = tmp_path / "a.json"
     out_b = tmp_path / "b.json"
@@ -269,12 +270,12 @@ def test_eval_workers_consistency() -> None:
     assert results_seq[0].fitness == results_mp[0].fitness
 
 
-def test_baseline_league_files_loadable() -> None:
-    root = Path(__file__).resolve().parents[1]
-    baseline_path = root / "monopoly" / "data" / "params_baseline.json"
-    league_dir = root / "monopoly" / "data" / "league"
-    baseline = BotParams.from_json(baseline_path)
-    assert baseline is not None
+def test_baseline_league_files_loadable(tmp_path: Path) -> None:
+    baseline_path = tmp_path / "baseline.json"
+    league_dir = tmp_path / "league"
+    league_dir.mkdir()
+    _write_params(baseline_path, BotParams())
+    add_to_league(BotParams(cash_buffer_base=151), 0.1, {"name": "l1"}, league_dir)
     league = load_league(league_dir)
     assert league
     for params in league:
@@ -290,7 +291,7 @@ def test_bench_smoke() -> None:
 
     _write_params(baseline_path, BotParams())
     _write_params(candidate_path, BotParams())
-    _write_params(league_dir / "l1.json", BotParams())
+    add_to_league(BotParams(cash_buffer_base=151), 0.1, {"name": "l1"}, league_dir)
 
     result = subprocess.run(
         [
