@@ -17,6 +17,7 @@ import yaml
 
 from .engine import create_engine
 from .io_utils import read_json, tail_lines, write_json_atomic
+from .league import load_index
 from .params import BotParams, ThinkingConfig, load_params
 from .roster import BOT_NAME_BASELINE, build_roster_all_top1, build_roster_top1_plus_random
 from .run_utils import latest_run, list_runs
@@ -119,6 +120,11 @@ def _default_workers() -> int:
 
 def _html_escape(text: str) -> str:
     return html_lib.escape(str(text), quote=True)
+
+
+def _short_hash(value: str, length: int = 8) -> str:
+    value = str(value or "")
+    return value[:length]
 
 
 def _hex_to_rgb(value: str) -> tuple[int, int, int]:
@@ -971,19 +977,24 @@ def _render_board(
 # Actions and modes
 # ---------------------------------------------------------
 
-def _start_autotrain(
-    profile: str,
+def _start_autoevolve(
     workers: int,
-    plateau_epochs: int,
-    plateau_delta: float,
-    epoch_iters: int,
     population: int,
     elite: int,
+    epoch_iters: int,
+    plateau_epochs: int,
     min_games: int,
-    opponents: str,
-    cand_seats: str,
-    seeds_file: str,
+    plateau_delta: float,
+    games_per_cand: int,
+    max_steps: int,
+    seed: int,
+    top_k_pool: int,
+    league_cap: int,
+    max_new_bests: int,
+    meta_plateau_cycles: int,
+    bootstrap_min_league_for_pool: int,
     league_dir: str,
+    baseline_path: str,
     runs_dir: Path | None = None,
     resume: bool = False,
 ) -> Path:
@@ -993,10 +1004,8 @@ def _start_autotrain(
     cmd = [
         sys.executable,
         "-m",
-        "monopoly.autotrain",
+        "monopoly.autoevolve",
         "run",
-        "--profile",
-        profile,
         "--workers",
         str(workers),
         "--plateau-epochs",
@@ -1015,17 +1024,29 @@ def _start_autotrain(
         str(plateau_delta),
         "--delta",
         str(plateau_delta),
-        "--opponents",
-        str(opponents),
-        "--cand-seats",
-        str(cand_seats),
+        "--games-per-cand",
+        str(games_per_cand),
+        "--max-steps",
+        str(max_steps),
+        "--seed",
+        str(seed),
+        "--top-k-pool",
+        str(top_k_pool),
+        "--league-cap",
+        str(league_cap),
+        "--max-new-bests",
+        str(max_new_bests),
+        "--meta-plateau-cycles",
+        str(meta_plateau_cycles),
+        "--bootstrap-min-league-for-pool",
+        str(bootstrap_min_league_for_pool),
         "--league-dir",
         league_dir,
+        "--baseline",
+        baseline_path,
         "--runs-dir",
         str(runs_dir),
     ]
-    if seeds_file:
-        cmd.extend(["--seeds-file", seeds_file])
     if resume:
         cmd.append("--resume")
     error_log.parent.mkdir(parents=True, exist_ok=True)
@@ -1037,7 +1058,7 @@ def _start_autotrain(
     return runs_dir
 
 
-def _stop_autotrain(phase: str) -> None:
+def _stop_autoevolve(phase: str) -> None:
     proc = st.session_state.get("train_proc")
     if proc and proc.poll() is None:
         proc.terminate()
@@ -1298,25 +1319,43 @@ def render_training_mode() -> None:
 
     with st.sidebar:
         st.header("Тренировка")
-        preset = "Train Deep (веса, эффективно)"
-        st.caption(f"Preset: {preset}")
-        workers = st.number_input("Workers", min_value=1, value=_default_workers(), step=1)
-        population = st.number_input("Population", min_value=4, value=48, step=2)
-        elite = st.number_input("Elite", min_value=1, value=12, step=1)
-        epoch_iters = st.number_input("Epoch iters", min_value=1, value=10, step=1)
-        plateau_epochs = st.number_input("Plateau epochs", min_value=1, value=10, step=1)
-        plateau_delta = st.number_input("Plateau delta", min_value=0.0, value=0.005, step=0.001, format="%.3f")
-        min_games = st.number_input("Min games", min_value=10, value=400, step=20)
-        opponents = st.selectbox("Opponents", options=["baseline", "league", "mixed"], index=2)
-        seat_rotation = st.checkbox("Seat rotation", value=True)
-        seeds_file = st.text_input(
-            "Seeds file",
-            value=str(ROOT_DIR / "monopoly" / "data" / "seeds.txt"),
+        st.caption("Auto-evolve: bootstrap -> league -> meta-cycle")
+        top_k_pool = st.number_input("Top-K pool", min_value=1, value=8, step=1)
+        league_cap = st.number_input("League cap", min_value=1, value=16, step=1)
+        max_new_bests = st.number_input("Max new bests", min_value=1, value=16, step=1)
+        meta_plateau_cycles = st.number_input("Meta-plateau cycles", min_value=1, value=5, step=1)
+        bootstrap_min_league_for_pool = st.number_input(
+            "Bootstrap min league",
+            min_value=0,
+            value=4,
+            step=1,
         )
         league_dir = st.text_input(
             "League dir",
             value=str(ROOT_DIR / "monopoly" / "data" / "league"),
         )
+        baseline_path = st.text_input(
+            "Baseline params",
+            value=str(ROOT_DIR / "monopoly" / "data" / "params_baseline.json"),
+        )
+
+        with st.expander("Advanced"):
+            seed = st.number_input("Seed", min_value=0, max_value=999999, value=123, step=1)
+            workers = st.number_input("Workers", min_value=1, value=_default_workers(), step=1)
+            population = st.number_input("Population", min_value=4, value=48, step=2)
+            elite = st.number_input("Elite", min_value=1, value=12, step=1)
+            games_per_cand = st.number_input("Games per candidate", min_value=1, value=20, step=1)
+            max_steps = st.number_input("Max steps", min_value=100, value=2000, step=100)
+            epoch_iters = st.number_input("Epoch iters", min_value=1, value=10, step=1)
+            plateau_epochs = st.number_input("Plateau epochs", min_value=1, value=10, step=1)
+            plateau_delta = st.number_input(
+                "Plateau delta",
+                min_value=0.0,
+                value=0.005,
+                step=0.001,
+                format="%.3f",
+            )
+            min_games = st.number_input("Min games", min_value=10, value=400, step=20)
 
         st.subheader("Runs")
         selected_name = None
@@ -1347,43 +1386,53 @@ def render_training_mode() -> None:
         if proc and proc.poll() is None:
             st.warning("Тренировка уже запущена.")
         else:
-            _start_autotrain(
-                profile="train_deep",
+            _start_autoevolve(
                 workers=int(workers),
-                plateau_epochs=int(plateau_epochs),
-                plateau_delta=float(plateau_delta),
-                epoch_iters=int(epoch_iters),
                 population=int(population),
                 elite=int(elite),
+                epoch_iters=int(epoch_iters),
+                plateau_epochs=int(plateau_epochs),
                 min_games=int(min_games),
-                opponents=str(opponents),
-                cand_seats="rotate" if seat_rotation else "all",
-                seeds_file=seeds_file,
+                plateau_delta=float(plateau_delta),
+                games_per_cand=int(games_per_cand),
+                max_steps=int(max_steps),
+                seed=int(seed),
+                top_k_pool=int(top_k_pool),
+                league_cap=int(league_cap),
+                max_new_bests=int(max_new_bests),
+                meta_plateau_cycles=int(meta_plateau_cycles),
+                bootstrap_min_league_for_pool=int(bootstrap_min_league_for_pool),
                 league_dir=league_dir,
+                baseline_path=baseline_path,
             )
 
     if pause_btn:
-        _stop_autotrain("paused")
+        _stop_autoevolve("paused")
 
     if stop_btn:
-        _stop_autotrain("stopped")
+        _stop_autoevolve("stopped")
 
     if resume_btn:
         runs_dir_raw = st.session_state.get("train_runs_dir")
         if runs_dir_raw:
-            _start_autotrain(
-                profile="train_deep",
+            _start_autoevolve(
                 workers=int(workers),
-                plateau_epochs=int(plateau_epochs),
-                plateau_delta=float(plateau_delta),
-                epoch_iters=int(epoch_iters),
                 population=int(population),
                 elite=int(elite),
+                epoch_iters=int(epoch_iters),
+                plateau_epochs=int(plateau_epochs),
                 min_games=int(min_games),
-                opponents=str(opponents),
-                cand_seats="rotate" if seat_rotation else "all",
-                seeds_file=seeds_file,
+                plateau_delta=float(plateau_delta),
+                games_per_cand=int(games_per_cand),
+                max_steps=int(max_steps),
+                seed=int(seed),
+                top_k_pool=int(top_k_pool),
+                league_cap=int(league_cap),
+                max_new_bests=int(max_new_bests),
+                meta_plateau_cycles=int(meta_plateau_cycles),
+                bootstrap_min_league_for_pool=int(bootstrap_min_league_for_pool),
                 league_dir=league_dir,
+                baseline_path=baseline_path,
                 runs_dir=Path(runs_dir_raw),
                 resume=True,
             )
@@ -1393,12 +1442,22 @@ def render_training_mode() -> None:
         st.caption(f"runs_dir: {runs_dir_raw}")
 
     runs_dir = Path(runs_dir_raw) if runs_dir_raw else None
-    status = None
+    meta_status = None
+    cycle_status = None
+    cycle_dir = None
     if runs_dir and (runs_dir / "status.json").exists():
-        try:
-            status = read_status(runs_dir / "status.json")
-        except Exception as exc:
-            st.warning(f"status.json прочитать не удалось: {exc}")
+        meta_status = read_json(runs_dir / "status.json", default=None)
+        if isinstance(meta_status, dict):
+            cycle_dir_raw = meta_status.get("current_cycle_dir")
+            if cycle_dir_raw:
+                cycle_dir = Path(str(cycle_dir_raw))
+                if not cycle_dir.is_absolute():
+                    cycle_dir = (ROOT_DIR / cycle_dir).resolve()
+                if (cycle_dir / "status.json").exists():
+                    try:
+                        cycle_status = read_status(cycle_dir / "status.json")
+                    except Exception as exc:
+                        st.warning(f"cycle status прочитать не удалось: {exc}")
 
     proc = st.session_state.get("train_proc")
     if proc and proc.poll() is not None and proc.returncode not in (0, None):
@@ -1409,31 +1468,93 @@ def render_training_mode() -> None:
                 st.error("Тренировка завершилась с ошибкой. stderr:")
                 st.code("\n".join(tail))
 
-    if status:
+    if isinstance(meta_status, dict):
         st_autorefresh(interval=1000, key="train_refresh")
+        new_bests = int(meta_status.get("new_bests_count", 0) or 0)
+        max_bests = int(meta_status.get("max_new_bests", 0) or 0)
+        meta_plateau = int(meta_status.get("meta_plateau", 0) or 0)
+        meta_plateau_cap = int(meta_status.get("meta_plateau_cycles", 0) or 0)
+        league_size = int(meta_status.get("league_size", 0) or 0)
+        pool_snapshot = meta_status.get("pool_snapshot", [])
+        pool_size = len(pool_snapshot) if isinstance(pool_snapshot, list) else 0
+        bootstrap_mode = bool(meta_status.get("bootstrap", False))
+
         col1, col2, col3, col4 = st.columns(4)
-        col1.metric("Epoch", status["epoch"])
-        col2.metric(
-            "Best win-rate",
-            f"{status['best_winrate_mean']:.3f}",
-            help=f"CI [{status['best_winrate_ci_low']:.3f}, {status['best_winrate_ci_high']:.3f}]",
-        )
-        col3.metric("Best fitness", f"{status['best_fitness']:.4f}")
-        col4.metric("Games simulated", int(status["total_games_simulated"]))
+        col1.metric("Meta cycle", int(meta_status.get("current_cycle", 0) or 0))
+        col2.metric("New bests", f"{new_bests}/{max_bests}")
+        col3.metric("Meta plateau", f"{meta_plateau}/{meta_plateau_cap}")
+        col4.metric("League size", league_size)
 
         col5, col6, col7, col8 = st.columns(4)
-        col5.metric("Phase", status["current_phase"])
-        col6.metric(
-            "Plateau counter",
-            f"{status['plateau_counter']}/{status['plateau_epochs']}",
-        )
-        col7.metric("Promoted", int(status["promoted_count"]))
-        col8.metric("Last promoted", int(status["last_promoted_epoch"]))
+        col5.metric("Bootstrap", "Да" if bootstrap_mode else "Нет")
+        col6.metric("Pool size", pool_size)
+        col7.metric("Top-K pool", int(meta_status.get("top_k_pool", 0) or 0))
+        col8.metric("League cap", int(meta_status.get("league_cap", 0) or 0))
 
-        st.write(f"Cache hits: **{int(status['cache_hits_last_epoch'])}**")
+        if cycle_status:
+            col9, col10, col11, col12 = st.columns(4)
+            col9.metric("Epoch", cycle_status["epoch"])
+            col10.metric(
+                "Best win-rate",
+                f"{cycle_status['best_winrate_mean']:.3f}",
+                help=(
+                    f"CI [{cycle_status['best_winrate_ci_low']:.3f}, "
+                    f"{cycle_status['best_winrate_ci_high']:.3f}]"
+                ),
+            )
+            col11.metric("Best fitness", f"{cycle_status['best_fitness']:.4f}")
+            col12.metric("Games simulated", int(cycle_status["total_games_simulated"]))
 
-        log_path = runs_dir / "train_log.csv"
-        if log_path.exists():
+            col13, col14, col15, col16 = st.columns(4)
+            col13.metric("Phase", cycle_status["current_phase"])
+            col14.metric(
+                "Plateau counter",
+                f"{cycle_status['plateau_counter']}/{cycle_status['plateau_epochs']}",
+            )
+            col15.metric("Promoted", int(cycle_status["promoted_count"]))
+            col16.metric("Last promoted", int(cycle_status["last_promoted_epoch"]))
+
+            st.write(f"Cache hits: **{int(cycle_status['cache_hits_last_epoch'])}**")
+
+        league_items = []
+        try:
+            league_index = load_index(Path(league_dir))
+            league_items = league_index.get("items", [])
+        except Exception as exc:
+            st.warning(f"league/index.json прочитать не удалось: {exc}")
+
+        if league_items:
+            st.subheader("Top-16 лиги")
+            rows = [
+                {
+                    "rank": entry.get("rank"),
+                    "fitness": entry.get("fitness"),
+                    "hash": _short_hash(str(entry.get("hash", ""))),
+                    "created_at": entry.get("created_at", ""),
+                }
+                for entry in league_items
+            ]
+            st.table(rows)
+
+        st.subheader("Top-K snapshot (pool)")
+        if isinstance(pool_snapshot, list) and pool_snapshot:
+            pool_rows = [
+                {
+                    "rank": entry.get("rank"),
+                    "fitness": entry.get("fitness"),
+                    "hash": _short_hash(str(entry.get("hash", ""))),
+                }
+                for entry in pool_snapshot
+            ]
+            st.table(pool_rows)
+        else:
+            st.caption("Пул не сформирован (bootstrap или пустая лига).")
+
+        if cycle_dir:
+            log_path = cycle_dir / "train_log.csv"
+        else:
+            log_path = None
+        if log_path and log_path.exists():
             epochs: list[int] = []
             winrates: list[float] = []
             fitness: list[float] = []
@@ -1466,23 +1587,24 @@ def render_training_mode() -> None:
                     ax3.set_ylabel("Plateau counter")
                     st.pyplot(fig3, clear_figure=True)
 
-        progress_path = runs_dir / "progress.txt"
-        tail = tail_lines(progress_path, max_lines=200)
-        if tail:
-            st.subheader("Лог тренировки")
-            st.code("\n".join(tail))
-            try:
-                full_log = progress_path.read_text(encoding="utf-8")
-            except Exception:
-                full_log = "\n".join(tail)
-            st.download_button(
-                "Скачать лог",
-                data=full_log,
-                file_name="progress.txt",
-            )
+        if cycle_dir:
+            progress_path = cycle_dir / "progress.txt"
+            tail = tail_lines(progress_path, max_lines=200)
+            if tail:
+                st.subheader("Лог тренировки")
+                st.code("\n".join(tail))
+                try:
+                    full_log = progress_path.read_text(encoding="utf-8")
+                except Exception:
+                    full_log = "\n".join(tail)
+                st.download_button(
+                    "Скачать лог",
+                    data=full_log,
+                    file_name="progress.txt",
+                )
 
-        if status["current_phase"] == "finished":
-            best_path = Path(status["best_params_path"])
+        if cycle_status and cycle_status["current_phase"] == "finished":
+            best_path = Path(cycle_status["best_params_path"])
             if best_path.exists():
                 if st.button("Запустить live матч сейчас"):
                     _start_live_match(
