@@ -163,6 +163,7 @@ def run_autotrain(
     max_hours: float | None,
     seeds_file: Path | None,
     resume: bool,
+    opponents_pool: list[BotParams] | None = None,
 ) -> None:
     if elite > population:
         raise ValueError("elite должен быть <= population")
@@ -180,8 +181,11 @@ def run_autotrain(
     summary_path = runs_dir / "summary.txt"
 
     baseline = load_params(baseline_path).with_thinking(ThinkingConfig())
-    league = [params.with_thinking(ThinkingConfig()) for params in load_league(league_dir)]
-    opponents_pool = build_opponent_pool(opponents, baseline, league)
+    if opponents_pool is None:
+        league = [params.with_thinking(ThinkingConfig()) for params in load_league(league_dir)]
+        opponents_pool = build_opponent_pool(opponents, baseline, league)
+    else:
+        opponents_pool = [params.with_thinking(ThinkingConfig()) for params in opponents_pool]
 
     seeds = [seed + idx for idx in range(games_per_cand)]
     cases = build_eval_cases(seeds, players, cand_seats, seed)
@@ -342,6 +346,7 @@ def run_autotrain(
                 min_games=min_progress_games,
                 delta=delta,
                 seeds_file=seeds_file,
+                opponents_pool=list(opponents_pool),
             )
             write_json_atomic(last_bench_path, bench_result)
             save_params(cem_state.best_params, best_path)

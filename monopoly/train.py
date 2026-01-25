@@ -185,6 +185,8 @@ def _select_opponents(rng: random.Random, pool: Sequence[BotParams], count: int)
         raise ValueError("Пул оппонентов пуст")
     if len(pool) == 1:
         return [pool[0]] * count
+    if len(pool) >= count:
+        return rng.sample(list(pool), count)
     return [pool[rng.randrange(len(pool))] for _ in range(count)]
 
 
