@@ -516,18 +516,31 @@ def _normalize_auction_increments(increments: list[int] | None) -> list[int]:
     return cleaned or [1]
 
 
+def normalize_auction_price(current_price: int, increments: list[int]) -> int:
+    incs = _normalize_auction_increments(increments)
+    if not incs:
+        return current_price
+    min_increment = incs[0]
+    if min_increment <= 0:
+        return current_price
+    remainder = current_price % min_increment
+    if remainder == 0:
+        return current_price
+    return current_price + (min_increment - remainder)
+
+
 def auction_increment_for_remaining(remaining: int, increments: list[int]) -> int:
     incs = _normalize_auction_increments(increments)
     if not incs:
         return 0
     if len(incs) == 1:
         step = incs[0]
-        return step if remaining >= step * 2 else 0
+        return step if remaining >= step else 0
     if len(incs) == 2:
         small, large = incs[0], incs[1]
         if remaining >= large * 2:
             return large
-        if remaining >= small * 2:
+        if remaining >= small:
             return small
         return 0
     small = incs[0]
@@ -537,7 +550,7 @@ def auction_increment_for_remaining(remaining: int, increments: list[int]) -> in
         return large
     if remaining >= mid * 2:
         return mid
-    if remaining >= small * 2:
+    if remaining >= small:
         return small
     return 0
 
@@ -547,10 +560,15 @@ def choose_auction_bid(
     current_price: int,
     increments: list[int],
 ) -> int:
+    incs = _normalize_auction_increments(increments)
+    current_price = normalize_auction_price(current_price, incs)
+    min_increment = incs[0] if incs else 1
+    if target_max < min_increment:
+        return 0
     if target_max <= 0 or current_price >= target_max:
         return 0
     remaining = target_max - current_price
-    step = auction_increment_for_remaining(remaining, increments)
+    step = auction_increment_for_remaining(remaining, incs)
     if step <= 0:
         return 0
     bid = current_price + step

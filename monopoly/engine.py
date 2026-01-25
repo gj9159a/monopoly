@@ -5,7 +5,7 @@ from pathlib import Path
 
 from .bots import Bot, create_bots
 from .data_loader import load_board, load_cards, load_rules
-from .params import BotParams
+from .params import BotParams, normalize_auction_price
 from .models import Card, Cell, DeckState, Event, GameState, Player
 
 
@@ -1211,6 +1211,7 @@ class Engine:
         rounds = 0
         while len(active) > 1:
             for player_id in active[:]:
+                current_price = normalize_auction_price(current_price, increments)
                 player = state.players[player_id]
                 context = {
                     "type": "auction_bid",
@@ -1222,19 +1223,29 @@ class Engine:
                 decision = self.bots[player_id].decide(state, context)
                 if decision.get("action") == "bid":
                     bid = int(decision.get("bid", 0))
-                    if bid <= current_price or bid > player.money:
+                    increment = bid - current_price
+                    if (
+                        bid <= current_price
+                        or bid > player.money
+                        or bid < current_price + min_increment
+                        or increment not in increments
+                        or bid % min_increment != 0
+                    ):
                         events.append(
                             Event(
                                 type="AUCTION_PASS",
                                 turn_index=turn_index,
                                 player_id=player_id,
                                 msg_ru=f"{player.name} пас (некорректная ставка)",
-                                payload={"bid": bid, "current_price": current_price},
+                                payload={
+                                    "bid": bid,
+                                    "current_price": current_price,
+                                    "min_increment": min_increment,
+                                },
                             )
                         )
                         active.remove(player_id)
                     else:
-                        increment = bid - current_price
                         current_price = bid
                         last_bidder = player_id
                         events.append(
