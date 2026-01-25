@@ -27,7 +27,7 @@ python -m pip install -e ".[dev]"
 python -m streamlit run app.py
 ```
 
-В UI включайте режимы **Тренировка** и **Live матч** через левую панель. Лучшие параметры лежат в `runs/<timestamp>/best.json`.
+В UI включайте режимы **Тренировка** и **Live матч** через левую панель. Лучшие параметры лежат в `runs/<timestamp>/cycle_XXX/best.json`.
 
 ## Запуск
 
@@ -39,7 +39,7 @@ streamlit run app.py
 
 1) Откройте Streamlit и выберите режим **Тренировка**. Нажмите **Старт** — обучение идёт до плато.
 2) По завершении нажмите **Запустить live матч сейчас** или перейдите в **Live матч** и стартуйте 6 deep‑ботов.
-3) Лучшие параметры лежат в `runs/<timestamp>/best.json` — их можно переиспользовать для новых матчей.
+3) Лучшие параметры лежат в `runs/<timestamp>/cycle_XXX/best.json` — их можно переиспользовать для новых матчей.
 
 ## Тесты
 
@@ -71,95 +71,49 @@ python -m pytest -k smoke
 - Используется один параметризованный бот. Можно указать путь к файлу параметров (json/yaml).
 - Бот использует feature-based scoring с 3 стадиями (early/mid/late); параметры содержат веса для каждой стадии.
 
-## Обучение параметров (self-play, CEM)
+## Auto-evolve (bootstrap -> league -> meta-cycle)
 
 Важно:
-- Обучение весов идёт без thinking-mode, чтобы не замедлять и не зашумлять оценку кандидатов.
-- Thinking-mode — боевой усилитель для игры/live/bench и включается отдельно.
+- Обучение идёт без thinking-mode, чтобы не замедлять и не зашумлять оценку кандидатов.
+- Оппоненты формируются только из `monopoly/data/league/index.json` (TOP-16).
+- В Streamlit режим **Тренировка** запускает auto-evolve в фоне.
 
-Оценка кандидата идёт против пула оппонентов:
-- baseline: `monopoly/data/params_baseline.json`
-- league: `monopoly/data/league/index.json` + json-файлы параметров, перечисленные в index (TOP-16)
-
-Быстрый прогон (small):
+CLI-запуск:
 
 ```bash
-python -m monopoly.train --iters 5 --population 16 --elite 4 --games-per-cand 6 --players 6 --seed 123 --opponents mixed --cand-seats rotate --checkpoint-every 1 --out trained_params.json
+python -m monopoly.autoevolve run --workers auto
 ```
-
-Полный прогон (full):
-
-```bash
-python -m monopoly.train --iters 50 --population 48 --elite 12 --games-per-cand 20 --players 6 --seed 123 --opponents mixed --cand-seats rotate --checkpoint-every 5 --out trained_params.json
-```
-
-Метрики:
-- `best_fitness` — лучший найденный fitness за всё обучение (больше = лучше).
-- `mean_elite`/`std_elite` — среднее/разброс лучших кандидатов в итерации.
-- `eval_cache.jsonl` — кэш оценок, ускоряет повторные оценки одинаковых θ.
-
-Будут созданы:
-- `trained_params.json` — лучший набор параметров
-- `runs/<timestamp>/best_params.json` — лучший набор (checkpoint)
-- `runs/<timestamp>/mean_std.json` — параметры распределения
-- `runs/<timestamp>/train_log.csv` — лог обучения
-
-Опционально можно включить параллельную оценку кандидатов:
-
-```bash
-python -m monopoly.train --workers 4 ...
-```
-
-Запуск симуляции с сохранёнными параметрами:
-
-```bash
-python -m monopoly.sim --params trained_params.json --players 6 --seed 42 --games 1
-```
-
-## Autotrain (до плато) + UI
-
-В Streamlit доступны режимы **Тренировка** и **Live матч**. Тренировка запускается в фоне, прогресс берётся из `runs/<timestamp>/status.json`, лог — из `train_log.csv` и `progress.txt`.
-
-CLI-запуск автотренинга:
-
-```bash
-python -m monopoly.autotrain run --profile deep --workers auto
-```
-
-Параметры остановки по плато:
-- `--epoch-iters` (по умолчанию 10)
-- `--plateau-epochs` (по умолчанию 5)
-- `--eps-winrate` (по умолчанию 0.01)
-- `--eps-fitness` (по умолчанию 0.02)
-- `--min-progress-games` (по умолчанию 200)
-- `--delta` (по умолчанию 0.05)
-- `--max-hours` — опциональный предохранитель (по умолчанию нет лимита)
 
 Содержимое `runs/<timestamp>/`:
-- `status.json` — текущий статус (epoch, best win-rate, plateau и т.п.)
-- `train_log.csv` — история по эпохам
-- `progress.txt` — человекочитаемый лог
-- `best.json` — лучшие параметры
-- `last_bench.json` — последний бенчмарк
-- `summary.txt` — короткий итог по запуску
-- `error.log` — stderr при падении (если было)
+- `status.json` — мета-статус auto-evolve (цикл, new_bests, meta-plateau).
+- `cycle_XXX/status.json` — статус текущего цикла.
+- `cycle_XXX/train_log.csv` — история по эпохам.
+- `cycle_XXX/progress.txt` — человекочитаемый лог.
+- `cycle_XXX/best.json` — лучшие параметры цикла.
+- `error.log` — stderr при падении (если было).
+
+Запуск симуляции с параметрами цикла:
+
+```bash
+python -m monopoly.sim --params runs/<timestamp>/cycle_XXX/best.json --players 6 --seed 42 --games 1
+```
 
 Live матч (6 “deep planner” ботов, запись состояния для UI):
 
 ```bash
-python -m monopoly.live --players 6 --params runs/<timestamp>/best.json --mode deep --workers auto --time-per-decision-sec 3.0 --horizon-turns 60 --seed 42 --out runs/<timestamp>/live_state.json
+python -m monopoly.live --players 6 --params runs/<timestamp>/cycle_XXX/best.json --mode deep --workers auto --time-per-decision-sec 3.0 --horizon-turns 60 --seed 42 --out runs/<timestamp>/live_state.json
 ```
 
 ## Бенчмарк параметров
 
 ```bash
-python -m monopoly.bench --games 200 --players 6 --seed 123 --candidate trained_params.json --baseline monopoly/data/params_baseline.json --league-dir monopoly/data/league --opponents mixed
+python -m monopoly.bench --games 200 --players 6 --seed 123 --candidate runs/<timestamp>/cycle_XXX/best.json --baseline monopoly/data/params_baseline.json --league-dir monopoly/data/league --opponents mixed
 ```
 
 Можно использовать фиксированный набор сидов:
 
 ```bash
-python -m monopoly.bench --games 200 --seeds-file monopoly/data/seeds.txt --candidate trained_params.json --baseline monopoly/data/params_baseline.json --league-dir monopoly/data/league --opponents mixed
+python -m monopoly.bench --games 200 --seeds-file monopoly/data/seeds.txt --candidate runs/<timestamp>/cycle_XXX/best.json --baseline monopoly/data/params_baseline.json --league-dir monopoly/data/league --opponents mixed
 ```
 
 ## Лига и прогресс
@@ -167,7 +121,7 @@ python -m monopoly.bench --games 200 --seeds-file monopoly/data/seeds.txt --cand
 Добавление лучшей конфигурации в лигу (TOP-16 по fitness):
 
 ```bash
-python -m monopoly.league add --params trained_params.json --name best_YYYYMMDD_HHMM --meta "iter=50; fitness=..." --fitness 0.123 --top-k 16
+python -m monopoly.league add --params runs/<timestamp>/cycle_XXX/best.json --name best_YYYYMMDD_HHMM --meta "iter=50; fitness=..." --fitness 0.123 --top-k 16
 ```
 
 Список лиги и очистка старых:
@@ -190,9 +144,8 @@ python -m monopoly.progress --league-dir monopoly/data/league --baseline monopol
 ```
 
 Рекомендуемый workflow:
-1) train (50 итераций)
-2) league auto-add
-3) progress (200 игр) — сравнить с baseline и последними из лиги
+1) auto-evolve (meta-циклы)
+2) progress (200 игр) — сравнить с baseline и лигой
 
 ## Данные локализации и правил
 
