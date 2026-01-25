@@ -92,7 +92,14 @@ def prune_entries(league_dir: Path, keep: int) -> list[dict[str, Any]]:
     for entry in to_remove:
         path = _resolve_entry_path(entry, league_dir)
         if path.exists():
-            path.unlink()
+            try:
+                path.unlink()
+            except PermissionError:
+                try:
+                    path.chmod(0o666)
+                    path.unlink()
+                except PermissionError:
+                    raise
     entries = entries[-keep:]
     save_index(league_dir, entries)
     return entries

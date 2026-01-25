@@ -42,6 +42,7 @@ def test_mortgage_disables_rent():
     cell.mortgaged = True
 
     tenant.position = 0
+    engine.state.rng = FixedRNG([1, 2])
     events = engine.step()
     assert _last_rent_amount(events) == 0
 

@@ -24,8 +24,7 @@ def _local_tmp() -> Path:
     return path
 
 
-def test_league_index_roundtrip() -> None:
-    tmp_path = _local_tmp()
+def test_league_index_roundtrip(tmp_path: Path) -> None:
     league_dir = tmp_path / "league"
     league_dir.mkdir()
 
@@ -47,4 +46,3 @@ def test_league_index_roundtrip() -> None:
     assert len(entries_after) == 1
     assert not (league_dir / "first.json").exists()
     assert (league_dir / "second.json").exists()
-    _cleanup_tmp(tmp_path)

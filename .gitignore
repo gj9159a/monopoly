@@ -8,6 +8,7 @@ __pycache__/
 .pycache/
 *.egg-info/
 .venv/
+tests/_tmp/
 .mypy_cache/
 .ruff_cache/
 .coverage
