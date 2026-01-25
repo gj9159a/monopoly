@@ -39,19 +39,16 @@ def _write_params(path: Path, params: BotParams) -> None:
 
 
 def test_params_roundtrip() -> None:
-    params = BotParams(
-        cash_buffer_base=123,
-        cash_buffer_per_house=7,
-        auction_value_mult_street=1.2,
-        auction_value_mult_rail=1.1,
-        auction_value_mult_utility=0.8,
-        monopoly_completion_bonus=0.4,
-        monopoly_block_bonus=0.2,
-        build_aggressiveness=1.1,
-        un_mortgage_priority_mult=1.3,
-        jail_exit_aggressiveness=0.2,
-        risk_aversion=0.6,
-        max_bid_fraction=0.75,
+    params = BotParams.from_dict(
+        {
+            "cash_buffer_base": 123,
+            "cash_buffer_per_house": 7,
+            "max_bid_fraction": 0.75,
+            "weights": {
+                "auction": {"early": {"base_value": 1.4}},
+                "jail": {"late": {"action_pay": 0.5}},
+            },
+        }
     )
     tmp_path = _local_tmp()
     path = tmp_path / "params.json"

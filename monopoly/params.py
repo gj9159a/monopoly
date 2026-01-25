@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -9,40 +9,247 @@ import yaml
 
 from .models import Cell, GameState, Player
 
+STAGES = ("early", "mid", "late")
+
+AUCTION_FEATURES = [
+    "bias",
+    "base_value",
+    "group_strength",
+    "completes_monopoly",
+    "blocks_opponent_monopoly",
+    "cash_after_bid",
+    "liquidity_ratio",
+    "risk_of_ruin",
+    "is_street",
+    "is_railroad",
+    "is_utility",
+    "owned_in_group",
+]
+
+BUILD_FEATURES = [
+    "bias",
+    "roi",
+    "rent_delta",
+    "group_strength",
+    "cash_after_build",
+    "enemy_threat",
+    "level_norm",
+    "to_hotel",
+    "target_three",
+    "has_monopoly",
+    "bank_houses_ratio",
+    "bank_hotels_ratio",
+]
+
+MORTGAGE_FEATURES = [
+    "bias",
+    "asset_value",
+    "low_value",
+    "breaks_monopoly",
+    "has_buildings",
+    "is_railroad",
+    "is_utility",
+    "cash_needed",
+    "action_sell_building",
+    "action_mortgage",
+]
+
+JAIL_FEATURES = [
+    "bias",
+    "has_card",
+    "cash_after_pay",
+    "jail_turns",
+    "danger",
+    "action_pay",
+    "action_use_card",
+    "action_roll",
+    "danger_if_pay",
+    "danger_if_use_card",
+]
+
+DECISION_FEATURES = {
+    "auction": AUCTION_FEATURES,
+    "build": BUILD_FEATURES,
+    "mortgage": MORTGAGE_FEATURES,
+    "jail": JAIL_FEATURES,
+}
+
+
+@dataclass(frozen=True)
+class ParamSpec:
+    name: str
+    min_value: float
+    max_value: float
+    init_std: float
+    value_type: type
+
+
+def _weight_key(decision: str, stage: str, feature: str) -> str:
+    return f"{decision}_{stage}_{feature}"
+
+
+def _stage_weights(
+    base: dict[str, float],
+    early: dict[str, float] | None = None,
+    mid: dict[str, float] | None = None,
+    late: dict[str, float] | None = None,
+) -> dict[str, dict[str, float]]:
+    return {
+        "early": {**base, **(early or {})},
+        "mid": {**base, **(mid or {})},
+        "late": {**base, **(late or {})},
+    }
+
+
+def _default_weights() -> dict[str, dict[str, dict[str, float]]]:
+    auction_base = {
+        "bias": 0.0,
+        "base_value": 1.0,
+        "group_strength": 0.5,
+        "completes_monopoly": 1.2,
+        "blocks_opponent_monopoly": 0.6,
+        "cash_after_bid": 0.7,
+        "liquidity_ratio": 0.6,
+        "risk_of_ruin": -1.1,
+        "is_street": 0.3,
+        "is_railroad": 0.35,
+        "is_utility": 0.1,
+        "owned_in_group": 0.6,
+    }
+    build_base = {
+        "bias": 0.0,
+        "roi": 1.0,
+        "rent_delta": 0.4,
+        "group_strength": 0.5,
+        "cash_after_build": 0.7,
+        "enemy_threat": -0.4,
+        "level_norm": -0.1,
+        "to_hotel": 0.2,
+        "target_three": 0.4,
+        "has_monopoly": 0.8,
+        "bank_houses_ratio": 0.2,
+        "bank_hotels_ratio": 0.2,
+    }
+    mortgage_base = {
+        "bias": 0.0,
+        "asset_value": -0.6,
+        "low_value": 0.9,
+        "breaks_monopoly": -1.2,
+        "has_buildings": -0.8,
+        "is_railroad": 0.1,
+        "is_utility": 0.05,
+        "cash_needed": 1.0,
+        "action_sell_building": 0.7,
+        "action_mortgage": 0.2,
+    }
+    jail_base = {
+        "bias": 0.0,
+        "has_card": 0.2,
+        "cash_after_pay": 0.6,
+        "jail_turns": 0.4,
+        "danger": 0.0,
+        "action_pay": 0.2,
+        "action_use_card": 0.4,
+        "action_roll": 0.1,
+        "danger_if_pay": -0.7,
+        "danger_if_use_card": -0.6,
+    }
+    return {
+        "auction": _stage_weights(
+            auction_base,
+            early={"cash_after_bid": 0.6, "completes_monopoly": 1.1},
+            mid={"cash_after_bid": 0.8, "completes_monopoly": 1.3},
+            late={"cash_after_bid": 0.95, "risk_of_ruin": -1.3},
+        ),
+        "build": _stage_weights(
+            build_base,
+            early={"cash_after_build": 0.6},
+            mid={"cash_after_build": 0.7},
+            late={"cash_after_build": 0.9, "enemy_threat": -0.6},
+        ),
+        "mortgage": _stage_weights(
+            mortgage_base,
+            early={"action_sell_building": 0.8},
+            mid={"action_mortgage": 0.25},
+            late={"action_mortgage": 0.35, "breaks_monopoly": -1.4},
+        ),
+        "jail": _stage_weights(
+            jail_base,
+            early={"action_pay": 0.3, "action_roll": 0.05},
+            mid={"action_pay": 0.2},
+            late={"action_roll": 0.2, "danger_if_pay": -0.9},
+        ),
+    }
+
+
+_WEIGHT_KEYS: dict[str, tuple[str, str, str]] = {}
+for decision, feature_list in DECISION_FEATURES.items():
+    for stage in STAGES:
+        for feature in feature_list:
+            key = _weight_key(decision, stage, feature)
+            _WEIGHT_KEYS[key] = (decision, stage, feature)
+
+
+PARAM_SPECS: list[ParamSpec] = [
+    ParamSpec("cash_buffer_base", 0, 600, 120, int),
+    ParamSpec("cash_buffer_per_house", 0, 80, 20, int),
+    ParamSpec("max_bid_fraction", 0.2, 1.0, 0.2, float),
+]
+
+for key in _WEIGHT_KEYS:
+    PARAM_SPECS.append(ParamSpec(key, -2.5, 2.5, 0.4, float))
+
 
 @dataclass(frozen=True)
 class BotParams:
+    weights: dict[str, dict[str, dict[str, float]]] = field(default_factory=_default_weights)
     cash_buffer_base: int = 150
     cash_buffer_per_house: int = 20
-    auction_value_mult_street: float = 1.0
-    auction_value_mult_rail: float = 1.1
-    auction_value_mult_utility: float = 0.9
-    monopoly_completion_bonus: float = 0.6
-    monopoly_block_bonus: float = 0.3
-    build_aggressiveness: float = 1.0
-    un_mortgage_priority_mult: float = 1.1
-    jail_exit_aggressiveness: float = 0.6
-    risk_aversion: float = 0.5
-    max_bid_fraction: float = 0.9
+    max_bid_fraction: float = 0.95
 
     def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
+        return {
+            "cash_buffer_base": self.cash_buffer_base,
+            "cash_buffer_per_house": self.cash_buffer_per_house,
+            "max_bid_fraction": self.max_bid_fraction,
+            "weights": self.weights,
+        }
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "BotParams":
         normalized = dict(data)
-        for spec in PARAM_SPECS:
-            if spec.name in normalized:
-                value = normalized[spec.name]
-                if spec.value_type is int:
-                    normalized[spec.name] = int(round(float(value)))
-                else:
-                    normalized[spec.name] = float(value)
-        fields = {
-            field: normalized.get(field, getattr(cls, field))
-            for field in cls.__dataclass_fields__
-        }
-        return cls(**fields)
+        weights = _default_weights()
+
+        raw_weights = normalized.get("weights")
+        if isinstance(raw_weights, dict):
+            for decision, stages in raw_weights.items():
+                if decision not in weights or not isinstance(stages, dict):
+                    continue
+                for stage, features in stages.items():
+                    if stage not in weights[decision] or not isinstance(features, dict):
+                        continue
+                    for feature, value in features.items():
+                        if feature not in weights[decision][stage]:
+                            continue
+                        weights[decision][stage][feature] = float(value)
+
+        for key, value in normalized.items():
+            if key in _WEIGHT_KEYS:
+                decision, stage, feature = _WEIGHT_KEYS[key]
+                weights[decision][stage][feature] = float(value)
+
+        cash_buffer_base = int(normalized.get("cash_buffer_base", cls.cash_buffer_base))
+        cash_buffer_per_house = int(
+            normalized.get("cash_buffer_per_house", cls.cash_buffer_per_house)
+        )
+        max_bid_fraction = float(normalized.get("max_bid_fraction", cls.max_bid_fraction))
+
+        return cls(
+            weights=weights,
+            cash_buffer_base=cash_buffer_base,
+            cash_buffer_per_house=cash_buffer_per_house,
+            max_bid_fraction=max_bid_fraction,
+        )
 
     def to_json(self, path: Path) -> None:
         path.write_text(json.dumps(self.to_dict(), indent=2, sort_keys=True), encoding="utf-8")
@@ -59,33 +266,21 @@ class BotParams:
         return cls.from_dict(yaml.safe_load(path.read_text(encoding="utf-8")))
 
 
-@dataclass(frozen=True)
-class ParamSpec:
-    name: str
-    min_value: float
-    max_value: float
-    init_std: float
-    value_type: type
-
-
-PARAM_SPECS: list[ParamSpec] = [
-    ParamSpec("cash_buffer_base", 0, 600, 120, int),
-    ParamSpec("cash_buffer_per_house", 0, 80, 20, int),
-    ParamSpec("auction_value_mult_street", 0.4, 2.0, 0.4, float),
-    ParamSpec("auction_value_mult_rail", 0.4, 2.0, 0.4, float),
-    ParamSpec("auction_value_mult_utility", 0.4, 2.0, 0.4, float),
-    ParamSpec("monopoly_completion_bonus", 0.0, 1.5, 0.3, float),
-    ParamSpec("monopoly_block_bonus", 0.0, 1.2, 0.3, float),
-    ParamSpec("build_aggressiveness", 0.0, 2.0, 0.4, float),
-    ParamSpec("un_mortgage_priority_mult", 0.5, 2.0, 0.3, float),
-    ParamSpec("jail_exit_aggressiveness", 0.0, 1.0, 0.3, float),
-    ParamSpec("risk_aversion", 0.0, 1.0, 0.3, float),
-    ParamSpec("max_bid_fraction", 0.1, 1.0, 0.2, float),
-]
+BASE_FIELDS = {"cash_buffer_base", "cash_buffer_per_house", "max_bid_fraction"}
 
 
 def params_to_vector(params: BotParams) -> list[float]:
-    return [float(getattr(params, spec.name)) for spec in PARAM_SPECS]
+    values: list[float] = []
+    for spec in PARAM_SPECS:
+        if spec.name in BASE_FIELDS:
+            values.append(float(getattr(params, spec.name)))
+            continue
+        if spec.name in _WEIGHT_KEYS:
+            decision, stage, feature = _WEIGHT_KEYS[spec.name]
+            values.append(float(params.weights[decision][stage][feature]))
+            continue
+        values.append(0.0)
+    return values
 
 
 def vector_to_params(values: Iterable[float]) -> BotParams:
@@ -119,6 +314,20 @@ def save_params(params: BotParams, path: str | Path) -> None:
     raise ValueError(f"Неизвестный формат параметров: {path}")
 
 
+def game_stage(state: GameState) -> str:
+    owned = sum(
+        1
+        for cell in state.board
+        if cell.owner_id is not None and cell.cell_type in {"property", "railroad", "utility"}
+    )
+    buildings = sum(cell.houses + cell.hotels * 5 for cell in state.board)
+    if buildings >= 15 or owned >= 28:
+        return "late"
+    if buildings >= 5 or owned >= 12:
+        return "mid"
+    return "early"
+
+
 def compute_cash_buffer(state: GameState, player: Player, params: BotParams) -> int:
     opponent_buildings = 0
     for cell in state.board:
@@ -126,52 +335,7 @@ def compute_cash_buffer(state: GameState, player: Player, params: BotParams) -> 
             continue
         opponent_buildings += cell.houses + cell.hotels * 5
     buffer_value = params.cash_buffer_base + params.cash_buffer_per_house * opponent_buildings
-    buffer_value = int(buffer_value * (1 + params.risk_aversion))
-    return max(0, buffer_value)
-
-
-def estimate_asset_value(state: GameState, player: Player, cell: Cell, params: BotParams) -> float:
-    base = float(cell.price or 0)
-    if cell.cell_type == "property" and cell.group:
-        group_cells = [c for c in state.board if c.group == cell.group]
-        owned_by_player = [c for c in group_cells if c.owner_id == player.player_id]
-        if len(owned_by_player) == len(group_cells) - 1:
-            base += params.monopoly_completion_bonus * base
-        for opponent in state.players:
-            if opponent.player_id == player.player_id or opponent.bankrupt:
-                continue
-            if all(c.owner_id == opponent.player_id or c.index == cell.index for c in group_cells):
-                base += params.monopoly_block_bonus * base
-                break
-    return base
-
-
-def decide_auction_bid(
-    state: GameState,
-    player: Player,
-    cell: Cell,
-    current_price: int,
-    min_increment: int,
-    params: BotParams,
-) -> int:
-    if cell.price is None:
-        return 0
-    buffer_value = compute_cash_buffer(state, player, params)
-    max_bid_cash = max(0, player.money - buffer_value)
-    max_bid = int(max_bid_cash * params.max_bid_fraction)
-    if cell.cell_type == "property":
-        value = estimate_asset_value(state, player, cell, params) * params.auction_value_mult_street
-    elif cell.cell_type == "railroad":
-        value = estimate_asset_value(state, player, cell, params) * params.auction_value_mult_rail
-    elif cell.cell_type == "utility":
-        value = estimate_asset_value(state, player, cell, params) * params.auction_value_mult_utility
-    else:
-        value = 0
-    target = int(min(value, max_bid))
-    next_bid = current_price + min_increment
-    if next_bid <= target and next_bid <= player.money:
-        return next_bid
-    return 0
+    return max(0, int(buffer_value))
 
 
 def _property_level(houses: int, hotels: int) -> int:
@@ -222,40 +386,178 @@ def _can_build_on_cell(state: GameState, player_id: int, cell: Cell, houses: int
     return True
 
 
+def _estimate_rent(state: GameState, cell: Cell) -> float:
+    if cell.owner_id is None:
+        return 0.0
+    owner = state.players[cell.owner_id]
+    if owner.in_jail:
+        return 0.0
+    if cell.mortgaged:
+        return 0.0
+    if cell.cell_type == "property" and cell.rent_by_houses:
+        level = _property_level(cell.houses, cell.hotels)
+        level = max(0, min(level, len(cell.rent_by_houses) - 1))
+        rent = float(cell.rent_by_houses[level])
+        if level == 0 and cell.group and _owns_group(state, cell.owner_id, cell.group):
+            rent *= 2
+        return rent
+    if cell.cell_type == "railroad" and cell.rent:
+        owned = sum(
+            1
+            for c in state.board
+            if c.cell_type == "railroad" and c.owner_id == cell.owner_id
+        )
+        idx = max(0, min(owned - 1, len(cell.rent) - 1))
+        return float(cell.rent[idx])
+    if cell.cell_type == "utility" and cell.rent_multiplier:
+        owned = sum(
+            1
+            for c in state.board
+            if c.cell_type == "utility" and c.owner_id == cell.owner_id
+        )
+        idx = max(0, min(owned - 1, len(cell.rent_multiplier) - 1))
+        multiplier = float(cell.rent_multiplier[idx])
+        return multiplier * 7.0
+    return 0.0
+
+
+def _max_opponent_rent(state: GameState, player_id: int) -> float:
+    max_rent = 0.0
+    for cell in state.board:
+        if cell.owner_id is None or cell.owner_id == player_id:
+            continue
+        rent = _estimate_rent(state, cell)
+        if rent > max_rent:
+            max_rent = rent
+    return max_rent
+
+
+def _group_strength(state: GameState, group: str | None) -> float:
+    if not group:
+        return 0.0
+    group_cells = _group_cells(state, group)
+    if not group_cells:
+        return 0.0
+    base = 0.0
+    for cell in group_cells:
+        if cell.rent_by_houses:
+            base += float(cell.rent_by_houses[0])
+    return base / max(1.0, len(group_cells)) / 10.0
+
+
+def estimate_asset_value(state: GameState, player: Player, cell: Cell, params: BotParams) -> float:
+    base = float(cell.price or 0)
+    if cell.cell_type == "property" and cell.rent_by_houses:
+        base += float(cell.rent_by_houses[0]) * 5
+    elif cell.cell_type == "railroad" and cell.rent:
+        base += float(cell.rent[0]) * 4
+    elif cell.cell_type == "utility" and cell.rent_multiplier:
+        base += float(cell.price or 0) * 0.5
+    return base
+
+
+def _score_action(weights: dict[str, float], features: dict[str, float]) -> float:
+    return sum(weights.get(name, 0.0) * value for name, value in features.items())
+
+
+def decide_auction_bid(
+    state: GameState,
+    player: Player,
+    cell: Cell,
+    current_price: int,
+    min_increment: int,
+    params: BotParams,
+) -> int:
+    if cell.price is None:
+        return 0
+    stage = game_stage(state)
+    weights = params.weights["auction"][stage]
+    max_bid = min(player.money, int(player.money * params.max_bid_fraction))
+    min_bid = current_price + min_increment
+    if max_bid < min_bid:
+        return 0
+
+    candidates: list[int] = []
+    spread = max(1, (max_bid - min_bid) // 3)
+    for bid in (min_bid, min_bid + spread, min_bid + spread * 2, max_bid):
+        bid = min(max_bid, max(min_bid, bid))
+        if bid not in candidates:
+            candidates.append(bid)
+
+    best_bid = 0
+    best_score = 0.0
+    start_cash = max(1, state.rules.starting_cash)
+    risk = _max_opponent_rent(state, player.player_id) / max(1.0, player.money)
+
+    for bid in candidates:
+        cash_after = player.money - bid
+        if cash_after < 0:
+            continue
+        group_strength = _group_strength(state, cell.group)
+        completes = 0.0
+        blocks = 0.0
+        owned_in_group = 0.0
+        if cell.cell_type == "property" and cell.group:
+            group_cells = _group_cells(state, cell.group)
+            owned_by_player = [c for c in group_cells if c.owner_id == player.player_id]
+            owned_in_group = len(owned_by_player) / max(1, len(group_cells))
+            if len(owned_by_player) == len(group_cells) - 1:
+                completes = 1.0
+            for opponent in state.players:
+                if opponent.player_id == player.player_id or opponent.bankrupt:
+                    continue
+                if all(
+                    c.owner_id == opponent.player_id or c.index == cell.index
+                    for c in group_cells
+                ):
+                    blocks = 1.0
+                    break
+        features = {
+            "bias": 1.0,
+            "base_value": float(cell.price) / 100.0,
+            "group_strength": group_strength,
+            "completes_monopoly": completes,
+            "blocks_opponent_monopoly": blocks,
+            "cash_after_bid": cash_after / start_cash,
+            "liquidity_ratio": cash_after / max(1.0, player.money),
+            "risk_of_ruin": risk,
+            "is_street": 1.0 if cell.cell_type == "property" else 0.0,
+            "is_railroad": 1.0 if cell.cell_type == "railroad" else 0.0,
+            "is_utility": 1.0 if cell.cell_type == "utility" else 0.0,
+            "owned_in_group": owned_in_group,
+        }
+        score = _score_action(weights, features)
+        if score > best_score:
+            best_score = score
+            best_bid = bid
+
+    if best_bid <= 0 or best_score <= 0.0:
+        return 0
+    return best_bid
+
+
 def decide_build_actions(state: GameState, player: Player, params: BotParams) -> list[dict[str, Any]]:
     actions: list[dict[str, Any]] = []
     if player.bankrupt:
         return actions
-    buffer_value = compute_cash_buffer(state, player, params)
-    effective_buffer = int(buffer_value * max(0.0, 1 - 0.5 * params.build_aggressiveness))
+    stage = game_stage(state)
+    weights = params.weights["build"][stage]
+    start_cash = max(1, state.rules.starting_cash)
+    enemy_threat = _max_opponent_rent(state, player.player_id) / max(1.0, player.money)
+
     available_cash = player.money
-
-    mortgaged_cells = [
-        cell
-        for cell in state.board
-        if cell.owner_id == player.player_id and cell.mortgaged
-    ]
-    mortgaged_cells.sort(
-        key=lambda cell: estimate_asset_value(state, player, cell, params), reverse=True
-    )
-    for cell in mortgaged_cells:
-        cost = int((cell.mortgage_value or 0) * (1 + state.rules.interest_rate))
-        if available_cash - cost < buffer_value:
-            continue
-        if estimate_asset_value(state, player, cell, params) * params.un_mortgage_priority_mult < cost:
-            continue
-        actions.append({"action": "unmortgage", "cell_index": cell.index})
-        available_cash -= cost
-
     local_houses = {cell.index: cell.houses for cell in state.board}
     local_hotels = {cell.index: cell.hotels for cell in state.board}
 
     planned = 0
     max_plans = 20
     while planned < max_plans:
-        candidates: list[Cell] = []
+        candidates: list[tuple[float, Cell]] = []
         total_houses = sum(local_houses.values())
         total_hotels = sum(local_hotels.values())
+        bank_houses_ratio = (state.rules.bank_houses - total_houses) / max(1, state.rules.bank_houses)
+        bank_hotels_ratio = (state.rules.bank_hotels - total_hotels) / max(1, state.rules.bank_hotels)
+
         for cell in state.board:
             if cell.owner_id != player.player_id:
                 continue
@@ -268,36 +570,55 @@ def decide_build_actions(state: GameState, player: Player, params: BotParams) ->
                 continue
             if cell.house_cost is None:
                 continue
-            levels = [
-                _property_level(local_houses[other.index], local_hotels[other.index])
-                for other in group_cells
-            ]
-            if _property_level(local_houses[cell.index], local_hotels[cell.index]) != min(levels):
+            if not _can_build_on_cell(state, player.player_id, cell, local_houses[cell.index], local_hotels[cell.index]):
                 continue
-            if _property_level(local_houses[cell.index], local_hotels[cell.index]) >= 5:
+
+            current_level = _property_level(local_houses[cell.index], local_hotels[cell.index])
+            next_level = min(5, current_level + 1)
+            if not cell.rent_by_houses:
                 continue
-            if _property_level(local_houses[cell.index], local_hotels[cell.index]) == 4 and total_hotels >= state.rules.bank_hotels:
+            rent_current = float(cell.rent_by_houses[min(current_level, len(cell.rent_by_houses) - 1)])
+            rent_next = float(cell.rent_by_houses[min(next_level, len(cell.rent_by_houses) - 1)])
+            rent_delta = max(0.0, rent_next - rent_current)
+            cost = int(cell.house_cost or 0)
+            if available_cash - cost < 0:
                 continue
-            if _property_level(local_houses[cell.index], local_hotels[cell.index]) < 4 and total_houses >= state.rules.bank_houses:
-                continue
-            candidates.append(cell)
+
+            features = {
+                "bias": 1.0,
+                "roi": rent_delta / max(1.0, cost),
+                "rent_delta": rent_delta / 100.0,
+                "group_strength": _group_strength(state, cell.group),
+                "cash_after_build": (available_cash - cost) / start_cash,
+                "enemy_threat": enemy_threat,
+                "level_norm": current_level / 4.0,
+                "to_hotel": 1.0 if current_level == 4 else 0.0,
+                "target_three": 1.0 if next_level == 3 else 0.0,
+                "has_monopoly": 1.0,
+                "bank_houses_ratio": bank_houses_ratio,
+                "bank_hotels_ratio": bank_hotels_ratio,
+            }
+            score = _score_action(weights, features)
+            candidates.append((score, cell))
+
         if not candidates:
             break
-        candidates.sort(
-            key=lambda cell: estimate_asset_value(state, player, cell, params), reverse=True
-        )
-        cell = candidates[0]
-        cost = cell.house_cost or 0
-        if available_cash - cost < effective_buffer:
+        candidates.sort(key=lambda item: item[0], reverse=True)
+        best_score, best_cell = candidates[0]
+        if best_score <= 0:
             break
-        actions.append({"action": "build", "cell_index": cell.index})
+        cost = best_cell.house_cost or 0
+        if available_cash - cost < 0:
+            break
+        actions.append({"action": "build", "cell_index": best_cell.index})
         available_cash -= cost
-        if _property_level(local_houses[cell.index], local_hotels[cell.index]) < 4:
-            local_houses[cell.index] += 1
+        if _property_level(local_houses[best_cell.index], local_hotels[best_cell.index]) < 4:
+            local_houses[best_cell.index] += 1
         else:
-            local_hotels[cell.index] = 1
-            local_houses[cell.index] = 0
+            local_hotels[best_cell.index] = 1
+            local_houses[best_cell.index] = 0
         planned += 1
+
     return actions
 
 
@@ -307,42 +628,135 @@ def decide_liquidation(
     actions: list[dict[str, Any]] = []
     if debt <= 0:
         return actions
-    sell_candidates = [
-        cell
-        for cell in state.board
-        if cell.owner_id == player.player_id and (cell.houses > 0 or cell.hotels > 0)
-    ]
-    sell_candidates.sort(
-        key=lambda cell: estimate_asset_value(state, player, cell, params)
-    )
-    for cell in sell_candidates:
-        level = _property_level(cell.houses, cell.hotels)
-        for _ in range(level):
-            actions.append({"action": "sell_building", "cell_index": cell.index})
+    stage = game_stage(state)
+    weights = params.weights["mortgage"][stage]
 
-    mortgage_candidates = [
-        cell
-        for cell in state.board
-        if cell.owner_id == player.player_id and not cell.mortgaged
-    ]
-    mortgage_candidates.sort(
-        key=lambda cell: estimate_asset_value(state, player, cell, params)
-    )
-    for cell in mortgage_candidates:
-        actions.append({"action": "mortgage", "cell_index": cell.index})
+    available_cash = player.money
+    local_houses = {cell.index: cell.houses for cell in state.board}
+    local_hotels = {cell.index: cell.hotels for cell in state.board}
+    local_mortgaged = {cell.index: cell.mortgaged for cell in state.board}
+
+    guard = 0
+    while available_cash < debt and guard < 200:
+        guard += 1
+        candidates: list[tuple[float, dict[str, Any], Cell]] = []
+        cash_needed = max(0, debt - available_cash) / 100.0
+
+        for cell in state.board:
+            if cell.owner_id != player.player_id:
+                continue
+            if local_hotels[cell.index] > 0 or local_houses[cell.index] > 0:
+                features = {
+                    "bias": 1.0,
+                    "asset_value": estimate_asset_value(state, player, cell, params) / 100.0,
+                    "low_value": 1.0 / (1.0 + estimate_asset_value(state, player, cell, params) / 100.0),
+                    "breaks_monopoly": 1.0 if cell.group and _owns_group(state, player.player_id, cell.group) else 0.0,
+                    "has_buildings": 1.0,
+                    "is_railroad": 1.0 if cell.cell_type == "railroad" else 0.0,
+                    "is_utility": 1.0 if cell.cell_type == "utility" else 0.0,
+                    "cash_needed": cash_needed,
+                    "action_sell_building": 1.0,
+                    "action_mortgage": 0.0,
+                }
+                score = _score_action(weights, features)
+                candidates.append((score, {"action": "sell_building", "cell_index": cell.index}, cell))
+            if local_mortgaged[cell.index]:
+                continue
+            if local_hotels[cell.index] > 0 or local_houses[cell.index] > 0:
+                continue
+            mortgage_value = int(cell.mortgage_value or 0)
+            if mortgage_value <= 0:
+                continue
+            features = {
+                "bias": 1.0,
+                "asset_value": estimate_asset_value(state, player, cell, params) / 100.0,
+                "low_value": 1.0 / (1.0 + estimate_asset_value(state, player, cell, params) / 100.0),
+                "breaks_monopoly": 1.0 if cell.group and _owns_group(state, player.player_id, cell.group) else 0.0,
+                "has_buildings": 0.0,
+                "is_railroad": 1.0 if cell.cell_type == "railroad" else 0.0,
+                "is_utility": 1.0 if cell.cell_type == "utility" else 0.0,
+                "cash_needed": cash_needed,
+                "action_sell_building": 0.0,
+                "action_mortgage": 1.0,
+            }
+            score = _score_action(weights, features)
+            candidates.append((score, {"action": "mortgage", "cell_index": cell.index}, cell))
+
+        if not candidates:
+            break
+        candidates.sort(key=lambda item: item[0], reverse=True)
+        best_score, action, cell = candidates[0]
+        if best_score <= 0:
+            break
+        if action["action"] == "sell_building":
+            refund = int((cell.house_cost or 0) / 2)
+            if local_hotels[cell.index] > 0:
+                local_hotels[cell.index] = 0
+                local_houses[cell.index] = 4
+            else:
+                local_houses[cell.index] = max(0, local_houses[cell.index] - 1)
+            available_cash += refund
+        elif action["action"] == "mortgage":
+            local_mortgaged[cell.index] = True
+            available_cash += int(cell.mortgage_value or 0)
+        actions.append(action)
 
     return actions
 
 
 def decide_jail_exit(state: GameState, player: Player, params: BotParams) -> str:
+    stage = game_stage(state)
+    weights = params.weights["jail"][stage]
     fine = state.rules.jail_fine
-    buffer_value = compute_cash_buffer(state, player, params)
     has_card = bool(player.get_out_of_jail_cards)
+    danger = _max_opponent_rent(state, player.player_id) / max(1.0, player.money)
+    start_cash = max(1, state.rules.starting_cash)
 
-    if has_card and player.money < fine + buffer_value:
-        return "use_card"
-    if player.money - fine >= buffer_value and params.jail_exit_aggressiveness >= 0.4:
-        return "pay"
-    if params.jail_exit_aggressiveness >= 0.9 and player.money - fine >= 0:
-        return "pay"
-    return "roll"
+    candidates: list[tuple[float, str]] = []
+
+    if player.money >= fine:
+        features_pay = {
+            "bias": 1.0,
+            "has_card": 1.0 if has_card else 0.0,
+            "cash_after_pay": (player.money - fine) / start_cash,
+            "jail_turns": player.jail_turns / 3.0,
+            "danger": danger,
+            "action_pay": 1.0,
+            "action_use_card": 0.0,
+            "action_roll": 0.0,
+            "danger_if_pay": danger,
+            "danger_if_use_card": 0.0,
+        }
+        candidates.append((_score_action(weights, features_pay), "pay"))
+
+    if has_card:
+        features_card = {
+            "bias": 1.0,
+            "has_card": 1.0,
+            "cash_after_pay": player.money / start_cash,
+            "jail_turns": player.jail_turns / 3.0,
+            "danger": danger,
+            "action_pay": 0.0,
+            "action_use_card": 1.0,
+            "action_roll": 0.0,
+            "danger_if_pay": 0.0,
+            "danger_if_use_card": danger,
+        }
+        candidates.append((_score_action(weights, features_card), "use_card"))
+
+    features_roll = {
+        "bias": 1.0,
+        "has_card": 1.0 if has_card else 0.0,
+        "cash_after_pay": player.money / start_cash,
+        "jail_turns": player.jail_turns / 3.0,
+        "danger": danger,
+        "action_pay": 0.0,
+        "action_use_card": 0.0,
+        "action_roll": 1.0,
+        "danger_if_pay": 0.0,
+        "danger_if_use_card": 0.0,
+    }
+    candidates.append((_score_action(weights, features_roll), "roll"))
+
+    candidates.sort(key=lambda item: item[0], reverse=True)
+    return candidates[0][1]
