@@ -88,19 +88,19 @@ PLAYER_COLORS = [
 ]
 
 BOARD_STYLE = {
-    "cell_w_min": 76,
-    "cell_w_max": 104,
-    "cell_h_min": 68,
-    "cell_h_max": 96,
-    "cell_vh": 7.4,
-    "gap": 4,
-    "pad": 10,
+    "cell_w_min": 86,
+    "cell_w_max": 120,
+    "cell_h_min": 76,
+    "cell_h_max": 110,
+    "cell_vh": 7.6,
+    "gap": 3,
+    "pad": 8,
     "font_base": 13,
     "font_small": 11,
-    "color_h": 16,
-    "color_side": 6,
-    "event_h": 300,
-    "tint_alpha": 0.07,
+    "color_h": 18,
+    "color_side": 7,
+    "event_h": 260,
+    "tint_alpha": 0.08,
 }
 
 
@@ -467,7 +467,7 @@ def _build_board_html(
     cell_h_min_px = int(BOARD_STYLE["cell_h_min"])
     cell_h_max_px = int(BOARD_STYLE["cell_h_max"])
     cell_vh = float(BOARD_STYLE["cell_vh"])
-    cell_w_vh = cell_vh + 0.8
+    cell_w_vh = cell_vh + 0.9
     gap_px = int(BOARD_STYLE["gap"])
     pad_px = int(BOARD_STYLE["pad"])
     font_base = float(BOARD_STYLE["font_base"])
@@ -476,8 +476,8 @@ def _build_board_html(
     color_side = int(BOARD_STYLE["color_side"])
     event_h = int(BOARD_STYLE["event_h"])
     tint_alpha = float(BOARD_STYLE["tint_alpha"])
-    extra_px = 28
-    min_iframe_height = 640
+    extra_px = 32
+    min_iframe_height = 700
 
     iframe_height = rows * cell_h_max_px + (rows - 1) * gap_px + 2 * pad_px + extra_px
     if iframe_height < min_iframe_height:
@@ -497,12 +497,19 @@ def _build_board_html(
     html_cells: list[str] = []
     for idx, cell in enumerate(board):
         row, col = coords[idx]
-        owner_text = ""
         owner_id = _get(cell, "owner_id")
         cell_type = str(_get(cell, "cell_type", ""))
-        if owner_id is not None and 0 <= int(owner_id) < len(players):
-            owner_text = f"<span class='badge owner p{int(owner_id)+1}'>P{int(owner_id)+1}</span>"
+
         mort_text = "<span class='badge badge-mort'>ИП</span>" if _get(cell, "mortgaged", False) else ""
+        owner_ribbon = ""
+        if owner_id is not None and 0 <= int(owner_id) < len(players):
+            owner_ribbon = (
+                "<div class='owner-ribbon'>"
+                f"<span class='owner-pill p{int(owner_id)+1}'>P{int(owner_id)+1}</span>"
+                f"{mort_text}"
+                "</div>"
+            )
+
         build_text = ""
         if _get(cell, "hotels", 0):
             build_text = "<span class='hotel'>★</span>"
@@ -511,11 +518,11 @@ def _build_board_html(
 
         tokens = " ".join(
             [
-                f"<span class='token p{int(_get(p, 'player_id', 0)) + 1} {'active' if int(_get(p, 'player_id', 0)) == active_player_id else ''}'>{_player_badge(p, active_player_id)}</span>"
+                f"<span class='presence p{int(_get(p, 'player_id', 0)) + 1} {'active' if int(_get(p, 'player_id', 0)) == active_player_id else ''}'>{int(_get(p, 'player_id', 0)) + 1}</span>"
                 for p in players_at[idx]
             ]
         )
-        players_text = f"{tokens}" if tokens else ""
+        presence_text = f"{tokens}" if tokens else ""
 
         type_label = _cell_type_label(cell_type)
         type_icon = _icon_html(cell_type)
@@ -550,17 +557,15 @@ def _build_board_html(
             <div class='cell {type_class} {street_class} {corner_class} {active_class}' style='{style_attr}'>
               {color_side_html}
               {color_cap}
+              {owner_ribbon}
               <div class='cell-body'>
                 <div class='cell-title' title='{cell_name}'>{cell_name}</div>
                 {group_debug}
                 <div class='cell-type'>{type_icon}<span class='cell-type-label'>{type_label}</span></div>
                 <div class='cell-meta'>{meta_text}</div>
               </div>
-              <div class='cell-footer'>
-                <div class='cell-badges'>{owner_text}{mort_text}</div>
-                <div class='cell-buildings'>{build_text}</div>
-                <div class='cell-players'>{players_text}</div>
-              </div>
+              <div class='cell-buildings'>{build_text}</div>
+              <div class='cell-presence'>{presence_text}</div>
             </div>
             """
         )
@@ -626,17 +631,17 @@ def _build_board_html(
         background: #f8f4ee;
         border: 1px solid rgba(0, 0, 0, 0.08);
         border-radius: 8px;
-        padding: 6px;
+        padding: 7px;
         font-size: var(--fontSmall);
         line-height: 1.15;
         display: flex;
         flex-direction: column;
-        gap: 3px;
+        gap: 4px;
         position: relative;
       }}
       .cell.street {{
         background: var(--groupTint, #f8f4ee);
-        padding-left: calc(6px + var(--colorSide));
+        padding-left: calc(7px + var(--colorSide));
       }}
       .cell.active {{
         border: 2px solid #c24b2a;
@@ -656,6 +661,7 @@ def _build_board_html(
         height: var(--colorH);
         border-radius: 4px;
         background: var(--groupColor, transparent);
+        margin-bottom: 2px;
       }}
       .color-side {{
         position: absolute;
@@ -666,10 +672,40 @@ def _build_board_html(
         background: var(--groupColor, transparent);
         border-radius: 8px 0 0 8px;
       }}
+      .owner-ribbon {{
+        position: absolute;
+        top: 6px;
+        right: 6px;
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        z-index: 2;
+      }}
+      .cell.street .owner-ribbon {{
+        top: calc(var(--colorH) + 6px);
+      }}
+      .owner-pill {{
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        padding: 1px 6px;
+        border-radius: 10px;
+        font-size: 9px;
+        font-weight: 700;
+        color: #fff;
+        border: 1px solid rgba(0, 0, 0, 0.18);
+      }}
+      .owner-pill.p1 {{ background: {PLAYER_COLORS[0]}; }}
+      .owner-pill.p2 {{ background: {PLAYER_COLORS[1]}; }}
+      .owner-pill.p3 {{ background: {PLAYER_COLORS[2]}; }}
+      .owner-pill.p4 {{ background: {PLAYER_COLORS[3]}; }}
+      .owner-pill.p5 {{ background: {PLAYER_COLORS[4]}; }}
+      .owner-pill.p6 {{ background: {PLAYER_COLORS[5]}; }}
       .cell-body {{
         display: flex;
         flex-direction: column;
         gap: 3px;
+        padding-bottom: 18px;
       }}
       .cell-title {{
         font-weight: 700;
@@ -700,28 +736,41 @@ def _build_board_html(
         font-size: var(--fontSmall);
         color: #6b5b4b;
       }}
-      .cell-footer {{
-        margin-top: auto;
-        display: flex;
-        flex-direction: column;
-        gap: 2px;
-      }}
-      .cell-badges {{
-        display: flex;
-        gap: 4px;
-        flex-wrap: wrap;
-        align-items: center;
-      }}
       .cell-buildings {{
+        position: absolute;
+        right: 6px;
+        bottom: 6px;
         display: flex;
         gap: 2px;
         min-height: 12px;
       }}
-      .cell-players {{
+      .cell-presence {{
+        position: absolute;
+        left: 6px;
+        bottom: 6px;
         display: flex;
         flex-wrap: wrap;
-        gap: 2px;
-        font-size: 10px;
+        gap: 3px;
+      }}
+      .presence {{
+        width: 14px;
+        height: 14px;
+        border-radius: 50%;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 9px;
+        color: #fff;
+        border: 1px solid rgba(0, 0, 0, 0.22);
+      }}
+      .presence.p1 {{ background: {PLAYER_COLORS[0]}; }}
+      .presence.p2 {{ background: {PLAYER_COLORS[1]}; }}
+      .presence.p3 {{ background: {PLAYER_COLORS[2]}; }}
+      .presence.p4 {{ background: {PLAYER_COLORS[3]}; }}
+      .presence.p5 {{ background: {PLAYER_COLORS[4]}; }}
+      .presence.p6 {{ background: {PLAYER_COLORS[5]}; }}
+      .presence.active {{
+        box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.9), 0 0 6px rgba(0, 0, 0, 0.25);
       }}
       .badge {{
         display: inline-flex;
@@ -736,16 +785,6 @@ def _build_board_html(
         background: #f3c7c7;
         color: #8c1f1f;
       }}
-      .badge.owner {{
-        color: #ffffff;
-        border: 1px solid rgba(0, 0, 0, 0.18);
-      }}
-      .badge.owner.p1 {{ background: {PLAYER_COLORS[0]}; }}
-      .badge.owner.p2 {{ background: {PLAYER_COLORS[1]}; }}
-      .badge.owner.p3 {{ background: {PLAYER_COLORS[2]}; }}
-      .badge.owner.p4 {{ background: {PLAYER_COLORS[3]}; }}
-      .badge.owner.p5 {{ background: {PLAYER_COLORS[4]}; }}
-      .badge.owner.p6 {{ background: {PLAYER_COLORS[5]}; }}
       .house {{
         width: 8px;
         height: 8px;
@@ -757,25 +796,6 @@ def _build_board_html(
         color: #b22222;
         font-size: 12px;
         line-height: 1;
-      }}
-      .token {{
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-        padding: 1px 4px;
-        border-radius: 10px;
-        font-size: 9px;
-        color: #fff;
-        border: 1px solid rgba(0, 0, 0, 0.2);
-      }}
-      .token.p1 {{ background: {PLAYER_COLORS[0]}; }}
-      .token.p2 {{ background: {PLAYER_COLORS[1]}; }}
-      .token.p3 {{ background: {PLAYER_COLORS[2]}; }}
-      .token.p4 {{ background: {PLAYER_COLORS[3]}; }}
-      .token.p5 {{ background: {PLAYER_COLORS[4]}; }}
-      .token.p6 {{ background: {PLAYER_COLORS[5]}; }}
-      .token.active {{
-        box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.9), 0 0 6px rgba(0, 0, 0, 0.25);
       }}
       .cell.type-railroad {{ background: #f2f4f7; }}
       .cell.type-utility {{ background: #eef3f9; }}
@@ -1428,7 +1448,7 @@ def main() -> None:
 
     with st.sidebar:
         st.header("Режим")
-        mode = st.radio("", ["Игра", "Тренировка", "Live матч"], index=0)
+        mode = st.radio("Режим", ["Игра", "Тренировка", "Live матч"], index=0, label_visibility="collapsed")
         st.checkbox("Показать group_id", value=False, key="show_group_id")
 
     if mode == "Игра":
