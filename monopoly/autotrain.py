@@ -197,7 +197,7 @@ def run_autotrain(
         status = _prepare_status(status)
         status["plateau_epochs"] = plateau_epochs
         if best_path.exists():
-            cem_state.best_params = load_params(best_path)
+            cem_state.best_params = load_params(best_path).with_thinking(ThinkingConfig())
             cem_state.best_score = float(status.get("best_fitness", -1e9))
         if mean_std_path.exists():
             payload = json.loads(mean_std_path.read_text(encoding="utf-8"))
