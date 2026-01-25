@@ -68,14 +68,14 @@ CELL_TYPE_ICONS = {
 }
 
 GROUP_COLORS = {
-    "brown": "#8b5a2b",
-    "light_blue": "#89c5f5",
-    "pink": "#f2a4c8",
-    "orange": "#f39c4a",
-    "red": "#e2574c",
-    "yellow": "#f0d45b",
-    "green": "#3c9a5f",
-    "blue": "#3665d2",
+    "brown": "#8b4a2f",
+    "light_blue": "#7fc8f0",
+    "pink": "#d764a7",
+    "orange": "#f08a24",
+    "red": "#e04b3f",
+    "yellow": "#f2d24b",
+    "green": "#2f8f4e",
+    "blue": "#1f4fb2",
 }
 
 PLAYER_COLORS = [
@@ -87,35 +87,20 @@ PLAYER_COLORS = [
     "#1b9aaa",
 ]
 
-SCALE_PRESETS = {
-    "Компактно": {
-        "cell_w_min": 56,
-        "cell_w_max": 78,
-        "cell_h_min": 50,
-        "cell_h_max": 72,
-        "cell_vh": 6.0,
-        "gap": 2,
-        "pad": 6,
-        "font_base": 12,
-        "font_small": 10,
-        "color_h": 10,
-        "event_h": 150,
-        "bg_tint": 0.98,
-    },
-    "Комфортно": {
-        "cell_w_min": 68,
-        "cell_w_max": 92,
-        "cell_h_min": 60,
-        "cell_h_max": 88,
-        "cell_vh": 7.0,
-        "gap": 3,
-        "pad": 8,
-        "font_base": 13,
-        "font_small": 11,
-        "color_h": 16,
-        "event_h": 220,
-        "bg_tint": 1.0,
-    },
+BOARD_STYLE = {
+    "cell_w_min": 76,
+    "cell_w_max": 104,
+    "cell_h_min": 68,
+    "cell_h_max": 96,
+    "cell_vh": 7.4,
+    "gap": 4,
+    "pad": 10,
+    "font_base": 13,
+    "font_small": 11,
+    "color_h": 16,
+    "color_side": 6,
+    "event_h": 300,
+    "tint_alpha": 0.07,
 }
 
 
@@ -133,6 +118,32 @@ def _default_workers() -> int:
 
 def _html_escape(text: str) -> str:
     return html_lib.escape(str(text), quote=True)
+
+
+def _hex_to_rgb(value: str) -> tuple[int, int, int]:
+    value = value.lstrip("#")
+    if len(value) != 6:
+        return (0, 0, 0)
+    return tuple(int(value[i : i + 2], 16) for i in (0, 2, 4))
+
+
+def _rgba_from_hex(value: str, alpha: float) -> str:
+    r, g, b = _hex_to_rgb(value)
+    return f"rgba({r}, {g}, {b}, {alpha})"
+
+
+def _unknown_group_ids(board: list[Any]) -> list[str]:
+    unknown: set[str] = set()
+    for cell in board:
+        if str(_get(cell, "cell_type", "")) != "property":
+            continue
+        group = _get(cell, "group")
+        if not group:
+            continue
+        group_str = str(group)
+        if group_str not in GROUP_COLORS:
+            unknown.add(group_str)
+    return sorted(unknown)
 
 
 def _get(obj: Any, key: str, default: Any | None = None) -> Any:
@@ -174,10 +185,27 @@ def _icon_html(cell_type: str) -> str:
         "go_to_jail": "gavel",
         "property": "home",
     }
+    fallback = {
+        "railroad": "🚆",
+        "utility": "⚡",
+        "tax": "💰",
+        "chance": "❓",
+        "community": "🎁",
+        "jail": "⛓",
+        "go": "▶",
+        "free_parking": "🅿️",
+        "go_to_jail": "↘",
+        "property": "■",
+    }
     name = icon_names.get(cell_type)
     if not name:
         return _cell_icon(cell_type)
-    return f"<span class='ms-icon'>{name}</span>"
+    return (
+        "<span class='icon-wrap'>"
+        f"<span class='ms-icon' aria-hidden='true'>{name}</span>"
+        f"<span class='icon-fallback' aria-hidden='true'>{fallback.get(cell_type, '')}</span>"
+        "</span>"
+    )
 
 
 def _load_card_ids(data_dir: Path) -> set[str]:
@@ -279,6 +307,7 @@ def _build_center_panel(
     mode: str,
     thinking: dict[str, Any] | None = None,
     cards_status: dict[str, Any] | None = None,
+    unknown_groups: list[str] | None = None,
 ) -> str:
     players = _get(state, "players", [])
     board = _get(state, "board", [])
@@ -300,18 +329,15 @@ def _build_center_panel(
     )
 
     thinking_html = ""
-    if thinking:
-        if thinking.get("thinking"):
-            thinking_html = (
-                f"<div class='center-meta'>Думает… {thinking.get('decision_context','')}</div>"
-                f"<div class='center-meta'>Rollouts: {thinking.get('rollouts_done',0)} | "
-                f"Time left: {thinking.get('time_left_sec',0):.2f}s</div>"
-            )
+    if thinking and thinking.get("thinking"):
+        thinking_html = (
+            f"<div class='center-meta'>Думает… {thinking.get('decision_context','')}</div>"
+            f"<div class='center-meta'>Rollouts: {thinking.get('rollouts_done',0)} | "
+            f"Time left: {thinking.get('time_left_sec',0):.2f}s</div>"
+        )
 
-    events_tail = event_log[-20:]
-    events_html = "".join(
-        f"<div class='event-line'>{_event_msg(ev)}</div>" for ev in events_tail
-    )
+    events_tail = event_log[-30:]
+    events_html = "".join(f"<div class='event-line'>{_event_msg(ev)}</div>" for ev in events_tail)
     if last_card:
         events_html = f"<div class='event-highlight'>{_event_msg(last_card)}</div>" + events_html
 
@@ -355,7 +381,7 @@ def _build_center_panel(
     jail_text = "Да" if active_player and _get(active_player, "in_jail", False) else "Нет"
 
     legend_icons = (
-        f"{_icon_html('property')} улица, { _icon_html('railroad')} ЖД, {_icon_html('utility')} коммуналка, "
+        f"{_icon_html('property')} улица, {_icon_html('railroad')} ЖД, {_icon_html('utility')} коммуналка, "
         f"{_icon_html('tax')} налог, {_icon_html('chance')} шанс, {_icon_html('community')} казна, "
         f"{_icon_html('jail')} тюрьма, {_icon_html('go')} старт, {_icon_html('free_parking')} парковка, "
         f"{_icon_html('go_to_jail')} в тюрьму"
@@ -378,9 +404,15 @@ def _build_center_panel(
             official_texts = "подключены"
             official_class = "status-ok"
 
+    unknown_html = ""
+    if unknown_groups:
+        safe_groups = ", ".join(_html_escape(group) for group in unknown_groups)
+        unknown_html = f"<div class='center-alert'>Неизвестные group_id: {safe_groups}</div>"
+
     return f"""
     <div class='center-grid'>
-      <div class='center-block'>
+      {unknown_html}
+      <div class='center-block center-current'>
         <div class='center-title'>Текущий ход</div>
         <div class='center-value'>{active_player_name}</div>
         <div class='center-meta'>Деньги: {active_money}</div>
@@ -389,11 +421,11 @@ def _build_center_panel(
         <div class='center-meta'>Тюрьма: {jail_text}</div>
         {thinking_html}
       </div>
-      <div class='center-block'>
+      <div class='center-block center-events'>
         <div class='center-title'>События</div>
         <div class='event-list'>{events_html}</div>
       </div>
-      <div class='center-block'>
+      <div class='center-block center-players'>
         <div class='center-title'>Игроки</div>
         <table class='players-table'>
           <thead>
@@ -404,7 +436,7 @@ def _build_center_panel(
           </tbody>
         </table>
       </div>
-      <div class='center-block'>
+      <div class='center-block center-legend'>
         <details class='legend'>
           <summary>Легенда</summary>
           <div class='center-meta'>{legend_badges}</div>
@@ -427,23 +459,25 @@ def _build_board_html(
     players: list[Any],
     active_player_id: int | None,
     center_html: str,
-    scale_mode: str,
+    show_group_id: bool,
 ) -> tuple[str, int]:
     rows = 11
-    preset = SCALE_PRESETS.get(scale_mode, SCALE_PRESETS["Комфортно"])
-    cell_w_min_px = int(preset["cell_w_min"])
-    cell_w_max_px = int(preset["cell_w_max"])
-    cell_h_min_px = int(preset["cell_h_min"])
-    cell_h_max_px = int(preset["cell_h_max"])
-    cell_h_vh = float(preset["cell_vh"])
-    gap_px = int(preset["gap"])
-    pad_px = int(preset["pad"])
-    font_base = float(preset["font_base"])
-    font_small = float(preset["font_small"])
-    color_h = int(preset["color_h"])
-    event_h = int(preset["event_h"])
+    cell_w_min_px = int(BOARD_STYLE["cell_w_min"])
+    cell_w_max_px = int(BOARD_STYLE["cell_w_max"])
+    cell_h_min_px = int(BOARD_STYLE["cell_h_min"])
+    cell_h_max_px = int(BOARD_STYLE["cell_h_max"])
+    cell_vh = float(BOARD_STYLE["cell_vh"])
+    cell_w_vh = cell_vh + 0.8
+    gap_px = int(BOARD_STYLE["gap"])
+    pad_px = int(BOARD_STYLE["pad"])
+    font_base = float(BOARD_STYLE["font_base"])
+    font_small = float(BOARD_STYLE["font_small"])
+    color_h = int(BOARD_STYLE["color_h"])
+    color_side = int(BOARD_STYLE["color_side"])
+    event_h = int(BOARD_STYLE["event_h"])
+    tint_alpha = float(BOARD_STYLE["tint_alpha"])
     extra_px = 28
-    min_iframe_height = 600
+    min_iframe_height = 640
 
     iframe_height = rows * cell_h_max_px + (rows - 1) * gap_px + 2 * pad_px + extra_px
     if iframe_height < min_iframe_height:
@@ -474,22 +508,26 @@ def _build_board_html(
             build_text = "<span class='hotel'>★</span>"
         elif _get(cell, "houses", 0):
             build_text = "<span class='house'></span>" * int(_get(cell, "houses", 0))
+
         tokens = " ".join(
             [
-                f"<span class='token p{int(_get(p, 'player_id', 0)) + 1} {'active' if int(_get(p, 'player_id', 0)) == active_player_id else ''}'>P{int(_get(p, 'player_id', 0)) + 1}</span>"
+                f"<span class='token p{int(_get(p, 'player_id', 0)) + 1} {'active' if int(_get(p, 'player_id', 0)) == active_player_id else ''}'>{_player_badge(p, active_player_id)}</span>"
                 for p in players_at[idx]
             ]
         )
         players_text = f"{tokens}" if tokens else ""
+
         type_label = _cell_type_label(cell_type)
         type_icon = _icon_html(cell_type)
-        color = GROUP_COLORS.get(str(_get(cell, "group", "")), "")
-        color_strip = (
-            f"<div class='color-strip' style='background:{color}'></div>" if color else ""
-        )
+        group_id = str(_get(cell, "group", "")) if _get(cell, "group") else ""
+        group_color = GROUP_COLORS.get(group_id) if cell_type == "property" else ""
+        group_tint = _rgba_from_hex(group_color, tint_alpha) if group_color else ""
+        color_cap = "<div class='color-cap'></div>" if group_color else ""
+        color_side_html = "<div class='color-side'></div>" if group_color else ""
         corner_class = "corner" if idx in {0, 10, 20, 30} else ""
         active_class = "active" if active_position == idx else ""
         type_class = f"type-{cell_type}"
+        street_class = "street" if cell_type == "property" else ""
         cell_name_raw = _get(cell, "name", "")
         cell_name = _html_escape(cell_name_raw)
         meta_parts = []
@@ -498,16 +536,31 @@ def _build_board_html(
         if _get(cell, "tax_amount") is not None:
             meta_parts.append(f"Налог {int(_get(cell, 'tax_amount'))}")
         meta_text = " · ".join(meta_parts)
+        group_debug = (
+            f"<div class='cell-group'>{_html_escape(group_id)}</div>"
+            if show_group_id and group_id and cell_type == "property"
+            else ""
+        )
+        style_parts = [f"grid-row:{row + 1}; grid-column:{col + 1};"]
+        if group_color:
+            style_parts.append(f"--groupColor: {group_color}; --groupTint: {group_tint};")
+        style_attr = " ".join(style_parts)
         html_cells.append(
             f"""
-            <div class='cell {type_class} {corner_class} {active_class}' style='grid-row:{row + 1}; grid-column:{col + 1};'>
-              {color_strip}
-              <div class='cell-title' title='{cell_name}'>{cell_name}</div>
-              <div class='cell-type'>{type_icon} <span class='cell-type-label'>{type_label}</span></div>
-              <div class='cell-meta'>{meta_text}</div>
-              <div class='cell-badges'>{owner_text}{mort_text}</div>
-              <div class='cell-buildings'>{build_text}</div>
-              <div class='cell-players'>{players_text}</div>
+            <div class='cell {type_class} {street_class} {corner_class} {active_class}' style='{style_attr}'>
+              {color_side_html}
+              {color_cap}
+              <div class='cell-body'>
+                <div class='cell-title' title='{cell_name}'>{cell_name}</div>
+                {group_debug}
+                <div class='cell-type'>{type_icon}<span class='cell-type-label'>{type_label}</span></div>
+                <div class='cell-meta'>{meta_text}</div>
+              </div>
+              <div class='cell-footer'>
+                <div class='cell-badges'>{owner_text}{mort_text}</div>
+                <div class='cell-buildings'>{build_text}</div>
+                <div class='cell-players'>{players_text}</div>
+              </div>
             </div>
             """
         )
@@ -517,66 +570,120 @@ def _build_board_html(
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&family=Material+Symbols+Outlined&display=swap">
     <style>
+      :root {{
+        color-scheme: light;
+      }}
+      *, *::before, *::after {{
+        box-sizing: border-box;
+      }}
+      html, body {{
+        margin: 0;
+        padding: 0;
+      }}
       .board-grid {{
-        --cellW: clamp({cell_w_min_px}px, {cell_h_vh + 1.0}vh, {cell_w_max_px}px);
-        --cellH: clamp({cell_h_min_px}px, {cell_h_vh}vh, {cell_h_max_px}px);
+        --cellW: clamp({cell_w_min_px}px, {cell_w_vh}vh, {cell_w_max_px}px);
+        --cellH: clamp({cell_h_min_px}px, {cell_vh}vh, {cell_h_max_px}px);
         --gap: {gap_px}px;
         --pad: {pad_px}px;
         --fontBase: {font_base}px;
         --fontSmall: {font_small}px;
         --colorH: {color_h}px;
+        --colorSide: {color_side}px;
         display: grid;
         grid-template-columns: repeat({rows}, minmax(var(--cellW), 1fr));
         grid-template-rows: repeat({rows}, var(--cellH));
         gap: var(--gap);
-        background: #e6e0d6;
+        background: #e9e2d5;
         padding: var(--pad);
-        border-radius: 12px;
+        border-radius: 16px;
         position: relative;
-        font-family: 'Inter', 'Segoe UI', sans-serif;
+        font-family: 'Inter', 'Segoe UI', system-ui, sans-serif;
+        color: #2f2a24;
+        box-shadow: 0 8px 18px rgba(0, 0, 0, 0.08);
+      }}
+      .icon-wrap {{
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
       }}
       .ms-icon {{
         font-family: 'Material Symbols Outlined', 'Segoe UI Symbol', sans-serif;
         font-size: 14px;
         line-height: 1;
       }}
+      .icon-fallback {{
+        display: none;
+        font-size: 13px;
+        line-height: 1;
+      }}
+      .no-icon-font .ms-icon {{
+        display: none;
+      }}
+      .no-icon-font .icon-fallback {{
+        display: inline;
+      }}
       .cell {{
-        background: #f7f2ea;
-        border: 1px solid #c9bfae;
+        background: #f8f4ee;
+        border: 1px solid rgba(0, 0, 0, 0.08);
+        border-radius: 8px;
         padding: 6px;
         font-size: var(--fontSmall);
-        line-height: 1.2;
+        line-height: 1.15;
         display: flex;
         flex-direction: column;
-        justify-content: space-between;
+        gap: 3px;
         position: relative;
-        box-shadow: inset 0 0 0 1px rgba(255,255,255,0.35);
+      }}
+      .cell.street {{
+        background: var(--groupTint, #f8f4ee);
+        padding-left: calc(6px + var(--colorSide));
       }}
       .cell.active {{
-        border: 2px solid #c44d29;
-        box-shadow: inset 0 0 0 2px #f2d3c7;
-        background: #fff3ee;
+        border: 2px solid #c24b2a;
+        box-shadow: 0 0 0 2px rgba(194, 75, 42, 0.15);
+        background: #fff6ef;
       }}
       .cell.corner {{
-        background: #f2e8d8;
-        border: 2px solid #bfae98;
+        background: #f3eadc;
+        border: 2px solid rgba(0, 0, 0, 0.18);
         font-weight: 700;
-        text-transform: uppercase;
       }}
       .cell.corner .cell-title {{
         font-size: 13px;
         text-align: center;
       }}
+      .color-cap {{
+        height: var(--colorH);
+        border-radius: 4px;
+        background: var(--groupColor, transparent);
+      }}
+      .color-side {{
+        position: absolute;
+        left: 0;
+        top: 0;
+        bottom: 0;
+        width: var(--colorSide);
+        background: var(--groupColor, transparent);
+        border-radius: 8px 0 0 8px;
+      }}
+      .cell-body {{
+        display: flex;
+        flex-direction: column;
+        gap: 3px;
+      }}
       .cell-title {{
         font-weight: 700;
         font-size: calc(var(--fontBase) + 0.5px);
-        min-height: 28px;
-        word-break: break-word;
+        line-height: 1.15;
         display: -webkit-box;
         -webkit-box-orient: vertical;
         -webkit-line-clamp: 2;
         overflow: hidden;
         text-overflow: ellipsis;
+      }}
+      .cell-group {{
+        font-size: 9px;
+        color: #7b6a59;
       }}
       .cell-type {{
         font-size: var(--fontSmall);
@@ -586,13 +693,18 @@ def _build_board_html(
         gap: 4px;
       }}
       .cell-type-label {{
-        text-transform: uppercase;
-        letter-spacing: 0.02em;
+        text-transform: none;
+        letter-spacing: 0;
       }}
       .cell-meta {{
         font-size: var(--fontSmall);
         color: #6b5b4b;
-        min-height: 14px;
+      }}
+      .cell-footer {{
+        margin-top: auto;
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
       }}
       .cell-badges {{
         display: flex;
@@ -606,25 +718,27 @@ def _build_board_html(
         min-height: 12px;
       }}
       .cell-players {{
-        font-size: var(--fontSmall);
-        color: #2f2a24;
-        font-weight: 600;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 2px;
+        font-size: 10px;
       }}
       .badge {{
-        display: inline-block;
-        padding: 1px 4px;
-        border-radius: 6px;
+        display: inline-flex;
+        align-items: center;
+        padding: 1px 5px;
+        border-radius: 8px;
         font-size: 9px;
         line-height: 1.2;
         font-weight: 700;
       }}
       .badge-mort {{
-        background: #e8c6c6;
+        background: #f3c7c7;
         color: #8c1f1f;
       }}
       .badge.owner {{
         color: #ffffff;
-        border: 1px solid rgba(0,0,0,0.15);
+        border: 1px solid rgba(0, 0, 0, 0.18);
       }}
       .badge.owner.p1 {{ background: {PLAYER_COLORS[0]}; }}
       .badge.owner.p2 {{ background: {PLAYER_COLORS[1]}; }}
@@ -637,6 +751,7 @@ def _build_board_html(
         height: 8px;
         background: #2f7d2f;
         border-radius: 2px;
+        display: inline-block;
       }}
       .hotel {{
         color: #b22222;
@@ -647,13 +762,11 @@ def _build_board_html(
         display: inline-flex;
         align-items: center;
         justify-content: center;
-        width: 18px;
-        height: 18px;
-        border-radius: 50%;
+        padding: 1px 4px;
+        border-radius: 10px;
         font-size: 9px;
         color: #fff;
-        margin-right: 2px;
-        border: 1px solid rgba(0,0,0,0.2);
+        border: 1px solid rgba(0, 0, 0, 0.2);
       }}
       .token.p1 {{ background: {PLAYER_COLORS[0]}; }}
       .token.p2 {{ background: {PLAYER_COLORS[1]}; }}
@@ -662,49 +775,59 @@ def _build_board_html(
       .token.p5 {{ background: {PLAYER_COLORS[4]}; }}
       .token.p6 {{ background: {PLAYER_COLORS[5]}; }}
       .token.active {{
-        box-shadow: 0 0 0 2px rgba(255,255,255,0.9), 0 0 6px rgba(0,0,0,0.2);
+        box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.9), 0 0 6px rgba(0, 0, 0, 0.25);
       }}
-      .color-strip {{
-        height: var(--colorH);
-        border-radius: 2px;
-        margin-bottom: 4px;
-      }}
-      .cell.type-railroad {{ background: #f3f5f6; }}
-      .cell.type-utility {{ background: #f1f5fa; }}
-      .cell.type-tax {{ background: #f9f0f0; }}
-      .cell.type-chance {{ background: #f4f0fb; }}
-      .cell.type-community {{ background: #f0f7f0; }}
-      .cell.type-jail {{ background: #f4f2ee; }}
-      .cell.type-free_parking {{ background: #f5f1ea; }}
+      .cell.type-railroad {{ background: #f2f4f7; }}
+      .cell.type-utility {{ background: #eef3f9; }}
+      .cell.type-tax {{ background: #f9eeee; }}
+      .cell.type-chance {{ background: #f2eef9; }}
+      .cell.type-community {{ background: #eef7ef; }}
+      .cell.type-jail {{ background: #f3f1ec; }}
+      .cell.type-free_parking {{ background: #f4f0ea; }}
       .cell.type-go_to_jail {{ background: #f6efe9; }}
-      .cell.corner {{ background: #f2e8d8; }}
       .board-center {{
         grid-row: 2 / span 9;
         grid-column: 2 / span 9;
-        background: #fdf7ef;
-        border: 1px solid #d7cbb7;
-        border-radius: 10px;
-        padding: 12px;
+        background: #fdf8f1;
+        border: 1px solid rgba(0, 0, 0, 0.08);
+        border-radius: 12px;
+        padding: 14px;
         overflow: hidden;
+        box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.6);
       }}
       .center-grid {{
         display: grid;
-        grid-template-columns: repeat(2, minmax(0, 1fr));
-        grid-auto-rows: minmax(80px, auto);
-        gap: 10px;
+        grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+        grid-template-areas:
+          "alert alert"
+          "current events"
+          "players players"
+          "legend legend";
+        gap: 12px;
         font-size: var(--fontSmall);
       }}
-      .center-block {{
-        background: #fffdf6;
-        border: 1px solid #e4d6c2;
-        border-radius: 8px;
-        padding: 9px;
+      .center-alert {{
+        grid-area: alert;
+        background: #fff1e0;
+        border: 1px solid #e7b894;
+        color: #8a4a2f;
+        border-radius: 10px;
+        padding: 6px 10px;
+        font-weight: 600;
       }}
+      .center-block {{
+        background: #ffffff;
+        border: 1px solid rgba(0, 0, 0, 0.08);
+        border-radius: 10px;
+        padding: 10px;
+      }}
+      .center-current {{ grid-area: current; }}
+      .center-events {{ grid-area: events; }}
+      .center-players {{ grid-area: players; }}
+      .center-legend {{ grid-area: legend; }}
       .center-title {{
         font-weight: 700;
         font-size: var(--fontSmall);
-        text-transform: uppercase;
-        letter-spacing: 0.02em;
         margin-bottom: 6px;
       }}
       .center-value {{
@@ -718,15 +841,17 @@ def _build_board_html(
       .event-list {{
         max-height: {event_h}px;
         overflow-y: auto;
+        padding-right: 4px;
       }}
       .event-line {{
         font-size: var(--fontSmall);
         color: #4b4035;
+        margin-bottom: 2px;
       }}
       .event-highlight {{
         font-size: var(--fontSmall);
         font-weight: 700;
-        margin-bottom: 4px;
+        margin-bottom: 6px;
       }}
       .players-table {{
         width: 100%;
@@ -735,8 +860,8 @@ def _build_board_html(
       }}
       .players-table th, .players-table td {{
         text-align: left;
-        padding: 2px 4px;
-        border-bottom: 1px solid #eee2d1;
+        padding: 3px 4px;
+        border-bottom: 1px solid rgba(0, 0, 0, 0.06);
       }}
       details.legend summary {{
         cursor: pointer;
@@ -744,16 +869,14 @@ def _build_board_html(
         margin-bottom: 6px;
       }}
       @media (max-width: 900px) {{
-        .board-grid {{
-          grid-template-columns: repeat({rows}, minmax(var(--cellW), 1fr));
-          grid-template-rows: repeat({rows}, var(--cellH));
-        }}
-        .cell-title {{
-          font-size: var(--fontSmall);
-          min-height: 20px;
-        }}
         .center-grid {{
           grid-template-columns: 1fr;
+          grid-template-areas:
+            "alert"
+            "current"
+            "events"
+            "players"
+            "legend";
         }}
       }}
       .status-ok {{
@@ -769,13 +892,23 @@ def _build_board_html(
         font-weight: 700;
       }}
     </style>
-    <div class='board-grid'>
-      <div class='board-center'>
-        {center_html}
-      </div>
-      {"".join(html_cells)}
-    </div>
-    """
+    <script>
+      try {{
+        const hasIconFont = document.fonts && document.fonts.check("12px 'Material Symbols Outlined'");
+        if (!hasIconFont) {{
+          document.documentElement.classList.add('no-icon-font');
+        }}
+      }} catch (e) {{
+        document.documentElement.classList.add('no-icon-font');
+      }}
+    </script>
+     <div class='board-grid'>
+       <div class='board-center'>
+         {center_html}
+       </div>
+       {"".join(html_cells)}
+     </div>
+     """
     return textwrap.dedent(html).strip(), iframe_height
 
 
@@ -784,9 +917,15 @@ def _render_board(
     players: list[Any],
     active_player_id: int | None,
     center_html: str,
-    scale_mode: str,
+    show_group_id: bool,
 ) -> None:
-    html, iframe_height = _build_board_html(board, players, active_player_id, center_html, scale_mode)
+    html, iframe_height = _build_board_html(
+        board,
+        players,
+        active_player_id,
+        center_html,
+        show_group_id,
+    )
     if html.count("class='cell") < 40:
         st.error("board html empty")
         return
@@ -950,9 +1089,15 @@ def render_game_mode(cards_status: dict[str, Any] | None = None) -> None:
     engine = st.session_state.engine
     state = engine.state
 
-    center_html = _build_center_panel(state, mode="game", cards_status=cards_status)
-    scale_mode = st.session_state.get("board_scale", "Комфортно")
-    _render_board(state.board, state.players, state.current_player, center_html, scale_mode)
+    unknown_groups = _unknown_group_ids(state.board)
+    show_group_id = bool(st.session_state.get("show_group_id", False))
+    center_html = _build_center_panel(
+        state,
+        mode="game",
+        cards_status=cards_status,
+        unknown_groups=unknown_groups,
+    )
+    _render_board(state.board, state.players, state.current_player, center_html, show_group_id)
 
     st.subheader("Управление")
     cols = st.columns(4)
@@ -1243,9 +1388,22 @@ def render_live_mode(cards_status: dict[str, Any] | None = None) -> None:
         "time_left_sec": payload.get("time_left_sec", 0.0),
     }
 
-    center_html = _build_center_panel(payload, mode="live", thinking=thinking, cards_status=cards_status)
-    scale_mode = st.session_state.get("board_scale", "Комфортно")
-    _render_board(payload.get("board", []), payload.get("players", []), payload.get("current_player"), center_html, scale_mode)
+    unknown_groups = _unknown_group_ids(payload.get("board", []))
+    show_group_id = bool(st.session_state.get("show_group_id", False))
+    center_html = _build_center_panel(
+        payload,
+        mode="live",
+        thinking=thinking,
+        cards_status=cards_status,
+        unknown_groups=unknown_groups,
+    )
+    _render_board(
+        payload.get("board", []),
+        payload.get("players", []),
+        payload.get("current_player"),
+        center_html,
+        show_group_id,
+    )
 
 
 # ---------------------------------------------------------
@@ -1271,8 +1429,7 @@ def main() -> None:
     with st.sidebar:
         st.header("Режим")
         mode = st.radio("", ["Игра", "Тренировка", "Live матч"], index=0)
-        scale_mode = st.radio("Размер доски", ["Компактно", "Комфортно"], index=1)
-        st.session_state.board_scale = scale_mode
+        st.checkbox("Показать group_id", value=False, key="show_group_id")
 
     if mode == "Игра":
         render_game_mode(cards_status=cards_status)
