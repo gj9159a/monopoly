@@ -30,12 +30,18 @@ class Bot:
             "economy_phase",
             "liquidation",
         }:
+            cache = None
+            if self.params.thinking.cache_enabled:
+                cache = self._thinking_cache
+                cache_size = max(0, int(self.params.thinking.cache_size))
+                if cache_size and len(cache) > cache_size:
+                    cache.clear()
             action, stats = choose_action(
                 state,
                 context,
                 self.params,
                 self.params.thinking,
-                cache=self._thinking_cache,
+                cache=cache,
             )
             self.last_thinking = {
                 "decision_type": stats.decision_type,
@@ -91,12 +97,18 @@ class Bot:
     def prioritize_mortgage(self, cells: list[Cell], state: GameState, player: Player) -> list[Cell]:
         if self.params.thinking.enabled and cells:
             context = {"type": "mortgage", "player_id": player.player_id, "cells": cells}
+            cache = None
+            if self.params.thinking.cache_enabled:
+                cache = self._thinking_cache
+                cache_size = max(0, int(self.params.thinking.cache_size))
+                if cache_size and len(cache) > cache_size:
+                    cache.clear()
             action, stats = choose_action(
                 state,
                 context,
                 self.params,
                 self.params.thinking,
-                cache=self._thinking_cache,
+                cache=cache,
             )
             self.last_thinking = {
                 "decision_type": stats.decision_type,

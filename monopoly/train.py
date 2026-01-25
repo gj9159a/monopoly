@@ -16,7 +16,15 @@ from typing import Iterable, Sequence
 from .engine import create_engine
 from .models import GameState
 from .league import add_to_league
-from .params import BotParams, PARAM_SPECS, load_params, params_to_vector, save_params, vector_to_params
+from .params import (
+    BotParams,
+    PARAM_SPECS,
+    ThinkingConfig,
+    load_params,
+    params_to_vector,
+    save_params,
+    vector_to_params,
+)
 
 
 @dataclass(frozen=True)
@@ -24,6 +32,15 @@ class EvalResult:
     fitness: float
     win_rate: float
     avg_net_worth: float
+
+
+LAST_TRAIN_THINKING_USED = False
+
+
+def _disable_thinking(params: BotParams) -> BotParams:
+    if not params.thinking.enabled and params.thinking == ThinkingConfig():
+        return params
+    return params.with_thinking(ThinkingConfig())
 
 
 def _net_worth(state: GameState, player_id: int) -> int:
@@ -243,6 +260,13 @@ def evaluate_candidates(
     cache: dict[str, EvalResult],
     cache_path: Path | None = None,
 ) -> tuple[list[EvalResult], int]:
+    sanitized_candidates = [_disable_thinking(params) for params in candidates]
+    sanitized_opponents = [_disable_thinking(params) for params in opponents_pool]
+    global LAST_TRAIN_THINKING_USED
+    LAST_TRAIN_THINKING_USED = any(params.thinking.enabled for params in sanitized_candidates) or any(
+        params.thinking.enabled for params in sanitized_opponents
+    )
+
     cases = build_eval_cases(seeds, num_players, cand_seats, seed)
     eval_config = {
         "players": num_players,
@@ -251,7 +275,7 @@ def evaluate_candidates(
         "seed": seed,
     }
     seeds_hash = _hash_seeds(seeds)
-    opponents_hash = _hash_params_list(opponents_pool)
+    opponents_hash = _hash_params_list(sanitized_opponents)
 
     results: list[EvalResult | None] = [None] * len(candidates)
     cache_hits = 0
@@ -268,7 +292,7 @@ def evaluate_candidates(
     ]] = []
     keys: dict[int, str] = {}
 
-    for cand_index, candidate in enumerate(candidates):
+    for cand_index, candidate in enumerate(sanitized_candidates):
         key = _make_cache_key(candidate, eval_config, seeds_hash, opponents_hash)
         cached = cache.get(key)
         if cached is not None:
@@ -286,7 +310,7 @@ def evaluate_candidates(
                     case_index,
                     num_players,
                     max_steps,
-                    list(opponents_pool),
+                    list(sanitized_opponents),
                     seed,
                 )
             )

@@ -73,6 +73,10 @@ python -m pytest -k smoke
 
 ## Обучение параметров (self-play, CEM)
 
+Важно:
+- Обучение весов идёт без thinking-mode, чтобы не замедлять и не зашумлять оценку кандидатов.
+- Thinking-mode — боевой усилитель для игры/live/bench и включается отдельно.
+
 Оценка кандидата идёт против пула оппонентов:
 - baseline: `monopoly/data/params_baseline.json`
 - league: `monopoly/data/league/*.json` (например `last_best.json`, `top_k.json`)

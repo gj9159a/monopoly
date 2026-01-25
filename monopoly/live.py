@@ -1,10 +1,7 @@
 from __future__ import annotations
 
 import argparse
-import copy
-import json
 import os
-import random
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -14,8 +11,8 @@ from .bots import Bot
 from .engine import Engine, create_game
 from .io_utils import write_json_atomic
 from .models import GameState
-from .params import BotParams, decide_auction_bid, decide_build_actions
-from .train import score_player
+from .params import BotParams, ThinkingConfig
+from .thinking import choose_action, fast_decide
 
 
 def _parse_workers(value: str) -> int:
@@ -23,36 +20,6 @@ def _parse_workers(value: str) -> int:
     if value == "auto":
         return max(1, os.cpu_count() or 1)
     return max(1, int(value))
-
-
-def _clone_state(state: GameState, seed: int | None = None) -> GameState:
-    cloned = copy.deepcopy(state)
-    rng = random.Random()
-    if seed is None:
-        rng.setstate(state.rng.getstate())
-    else:
-        rng.seed(seed)
-    cloned.rng = rng
-    return cloned
-
-
-class FixedActionBot:
-    def __init__(self, base_bot: Bot, player_id: int, decision_type: str, action: dict[str, Any]) -> None:
-        self.base_bot = base_bot
-        self.player_id = player_id
-        self.decision_type = decision_type
-        self.action = action
-        self.used = False
-
-    def decide(self, state: GameState, context: dict[str, Any]) -> dict[str, Any]:
-        if (
-            not self.used
-            and context.get("type") == self.decision_type
-            and int(context.get("player_id", -1)) == self.player_id
-        ):
-            self.used = True
-            return self.action
-        return self.base_bot.decide(state, context)
 
 
 @dataclass
@@ -142,198 +109,74 @@ class LiveWriter:
         write_json_atomic(self.path, payload)
 
 
-class DeepPlannerBot:
+class ThinkingLiveBot:
     def __init__(
         self,
         params: BotParams,
         player_id: int,
         writer: LiveWriter,
-        time_budget_sec: float,
-        horizon_turns: int,
+        config: ThinkingConfig,
     ) -> None:
-        self.params = params
+        self.params = params.with_thinking(config)
         self.player_id = player_id
-        self.base_bot = Bot(params)
         self.writer = writer
-        self.time_budget_sec = max(0.0, time_budget_sec)
-        self.horizon_turns = max(1, horizon_turns)
-        self.decision_index = 0
+        self.config = config
+        self.cache: dict[str, float] = {}
         self._last_progress_ts = 0.0
 
     def decide(self, state: GameState, context: dict[str, Any]) -> dict[str, Any]:
         decision_type = context.get("type", "")
-        if decision_type not in {"auction_bid", "jail_decision", "economy_phase"}:
-            return self.base_bot.decide(state, context)
+        if decision_type not in {"auction_bid", "jail_decision", "economy_phase", "liquidation"}:
+            return fast_decide(state, context, self.params)
 
-        candidates = self._candidate_actions(state, context)
-        if len(candidates) <= 1 or self.time_budget_sec <= 0:
-            return candidates[0] if candidates else self.base_bot.decide(state, context)
-
-        self.decision_index += 1
         start = time.perf_counter()
-        scores = [0.0] * len(candidates)
-        counts = [0] * len(candidates)
-        rollouts_done = 0
+        time_budget_sec = max(0.0, self.config.time_budget_ms / 1000.0)
 
-        while True:
+        def progress_cb(rollouts_done: int, candidates: int) -> None:
             now = time.perf_counter()
-            elapsed = now - start
-            if elapsed >= self.time_budget_sec:
-                break
-            for idx, action in enumerate(candidates):
-                if elapsed >= self.time_budget_sec:
-                    break
-                rollout_seed = state.seed + self.decision_index * 10007 + idx * 97 + rollouts_done * 13
-                score = self._rollout_score(state, context, action, rollout_seed)
-                scores[idx] += score
-                counts[idx] += 1
-                rollouts_done += 1
-                elapsed = time.perf_counter() - start
-                if elapsed >= self.time_budget_sec:
-                    break
-                self._maybe_report_progress(
-                    state,
-                    decision_type,
-                    rollouts_done,
-                    self.time_budget_sec,
-                    start,
-                )
-
-        self._report_progress(state, decision_type, rollouts_done, self.time_budget_sec, final=True)
-
-        best_idx = 0
-        best_value = float("-inf")
-        for idx, total in enumerate(scores):
-            if counts[idx] == 0:
-                continue
-            avg = total / counts[idx]
-            if avg > best_value:
-                best_value = avg
-                best_idx = idx
-        return candidates[best_idx]
-
-    def _candidate_actions(self, state: GameState, context: dict[str, Any]) -> list[dict[str, Any]]:
-        decision_type = context.get("type")
-        if decision_type == "auction_bid":
-            player_id = int(context["player_id"])
-            player = state.players[player_id]
-            cell = context["cell"]
-            current_price = int(context["current_price"])
-            min_increment = int(context["min_increment"])
-            base_bid = decide_auction_bid(state, player, cell, current_price, min_increment, self.params)
-            options = [{"action": "pass"}]
-            next_bid = current_price + min_increment
-            if next_bid <= player.money:
-                options.append({"action": "bid", "bid": next_bid})
-            if base_bid > 0:
-                options.append({"action": "bid", "bid": base_bid})
-            options = self._dedupe_actions(options)
-            return options
-        if decision_type == "jail_decision":
-            player_id = int(context["player_id"])
-            player = state.players[player_id]
-            actions = [{"action": "roll"}]
-            if player.money >= state.rules.jail_fine:
-                actions.append({"action": "pay"})
-            if player.get_out_of_jail_cards:
-                actions.append({"action": "use_card"})
-            return actions
-        if decision_type == "economy_phase":
-            player_id = int(context["player_id"])
-            player = state.players[player_id]
-            base_actions = decide_build_actions(state, player, self.params)
-            return self._dedupe_actions(
-                [
-                    {"actions": []},
-                    {"actions": base_actions},
-                ]
+            if now - self._last_progress_ts < 0.2:
+                return
+            self._last_progress_ts = now
+            elapsed = max(0.0, now - start)
+            time_left = max(0.0, time_budget_sec - elapsed)
+            self.writer.write(
+                state,
+                PlannerProgress(
+                    thinking=True,
+                    decision_context=str(decision_type),
+                    rollouts_done=rollouts_done,
+                    rollouts_target=candidates,
+                    time_budget_sec=time_budget_sec,
+                    time_left_sec=time_left,
+                ),
             )
-        return [self.base_bot.decide(state, context)]
 
-    def _dedupe_actions(self, actions: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        seen: set[str] = set()
-        unique: list[dict[str, Any]] = []
-        for action in actions:
-            key = json.dumps(action, sort_keys=True, default=str)
-            if key in seen:
-                continue
-            seen.add(key)
-            unique.append(action)
-        return unique
+        cache = self.cache if self.config.cache_enabled else None
+        if cache is not None:
+            cache_size = max(0, int(self.config.cache_size))
+            if cache_size and len(cache) > cache_size:
+                cache.clear()
 
-    def _rollout_score(
-        self,
-        state: GameState,
-        context: dict[str, Any],
-        action: dict[str, Any],
-        rollout_seed: int,
-    ) -> float:
-        cloned = _clone_state(state, seed=rollout_seed)
-        bots: list[Bot] = []
-        decision_type = str(context.get("type"))
-        for pid in range(len(cloned.players)):
-            base_bot = Bot(self.params)
-            if pid == self.player_id:
-                bots.append(FixedActionBot(base_bot, pid, decision_type, action))
-            else:
-                bots.append(base_bot)
-        engine = Engine(cloned, bots)
-        first_bankrupt_id = None
-        steps = 0
-        while steps < self.horizon_turns and not engine.state.game_over:
-            events = engine.step()
-            for event in events:
-                if event.type == "BANKRUPTCY" and first_bankrupt_id is None:
-                    first_bankrupt_id = event.player_id
-            steps += 1
-        return score_player(engine.state, self.player_id, first_bankrupt_id)
-
-    def _maybe_report_progress(
-        self,
-        state: GameState,
-        decision_type: str,
-        rollouts_done: int,
-        time_budget_sec: float,
-        start_time: float,
-    ) -> None:
-        now = time.perf_counter()
-        if now - self._last_progress_ts < 0.2:
-            return
-        self._last_progress_ts = now
-        elapsed = max(0.0, now - start_time)
-        time_left = max(0.0, time_budget_sec - elapsed)
+        action, stats = choose_action(
+            state,
+            context,
+            self.params,
+            self.config,
+            cache=cache,
+            progress_cb=progress_cb,
+        )
         self.writer.write(
             state,
             PlannerProgress(
-                thinking=True,
-                decision_context=decision_type,
-                rollouts_done=rollouts_done,
-                rollouts_target=0,
+                thinking=False,
+                decision_context="",
+                rollouts_done=stats.rollouts,
+                rollouts_target=stats.candidates,
                 time_budget_sec=time_budget_sec,
-                time_left_sec=time_left,
+                time_left_sec=0.0,
             ),
         )
-
-    def _report_progress(
-        self,
-        state: GameState,
-        decision_type: str,
-        rollouts_done: int,
-        time_budget_sec: float,
-        final: bool = False,
-    ) -> None:
-        time_left = 0.0 if final else time_budget_sec
-        self.writer.write(
-            state,
-            PlannerProgress(
-                thinking=not final,
-                decision_context=decision_type if not final else "",
-                rollouts_done=rollouts_done,
-                rollouts_target=0,
-                time_budget_sec=time_budget_sec,
-                time_left_sec=time_left,
-            ),
-        )
+        return action
 
 
 def run_live(
@@ -346,6 +189,10 @@ def run_live(
     out_path: Path,
     max_steps: int,
     workers: int,
+    rollouts_per_action: int,
+    cache_enabled: bool,
+    cache_size: int,
+    thinking_enabled: bool,
 ) -> None:
     params = BotParams()
     if params_path is not None:
@@ -357,9 +204,19 @@ def run_live(
     writer = LiveWriter(out_path)
 
     bots: list[Any] = []
-    if mode == "deep":
+    if thinking_enabled or mode == "deep":
+        rollouts_value = rollouts_per_action if rollouts_per_action > 0 else 12
+        config = ThinkingConfig(
+            enabled=True,
+            horizon_turns=max(1, horizon_turns),
+            rollouts_per_action=rollouts_value,
+            time_budget_ms=int(max(0.0, time_budget_sec) * 1000),
+            workers=max(1, workers),
+            cache_enabled=cache_enabled,
+            cache_size=max(0, cache_size),
+        )
         for pid in range(players):
-            bots.append(DeepPlannerBot(params, pid, writer, time_budget_sec, horizon_turns))
+            bots.append(ThinkingLiveBot(params, pid, writer, config))
     else:
         bots = [Bot(params) for _ in range(players)]
 
@@ -378,10 +235,14 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--players", type=int, default=6)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--params", type=Path, default=None)
-    parser.add_argument("--mode", type=str, choices=["deep", "fast"], default="deep")
+    parser.add_argument("--mode", type=str, choices=["deep", "fast"], default="fast")
     parser.add_argument("--workers", type=_parse_workers, default=_parse_workers("auto"))
+    parser.add_argument("--thinking", action="store_true")
     parser.add_argument("--time-per-decision-sec", type=float, default=3.0)
     parser.add_argument("--horizon-turns", type=int, default=60)
+    parser.add_argument("--rollouts-per-action", type=int, default=0)
+    parser.add_argument("--cache", action="store_true")
+    parser.add_argument("--cache-size", type=int, default=4096)
     parser.add_argument("--out", type=Path, default=Path("runs/live_state.json"))
     parser.add_argument("--max-steps", type=int, default=2000)
     return parser
@@ -400,6 +261,10 @@ def main(argv: list[str] | None = None) -> None:
         out_path=args.out,
         max_steps=args.max_steps,
         workers=args.workers,
+        rollouts_per_action=int(args.rollouts_per_action),
+        cache_enabled=bool(args.cache),
+        cache_size=int(args.cache_size),
+        thinking_enabled=bool(args.thinking),
     )
 
 

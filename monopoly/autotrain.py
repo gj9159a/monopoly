@@ -15,7 +15,15 @@ from typing import Any
 
 from .bench import bench
 from .io_utils import write_json_atomic, write_text_atomic
-from .params import BotParams, PARAM_SPECS, load_params, params_to_vector, save_params, vector_to_params
+from .params import (
+    BotParams,
+    PARAM_SPECS,
+    ThinkingConfig,
+    load_params,
+    params_to_vector,
+    save_params,
+    vector_to_params,
+)
 from .status import REQUIRED_STATUS_FIELDS, write_status
 from .train import build_eval_cases, build_opponent_pool, evaluate_candidates, load_league
 
@@ -32,7 +40,7 @@ class CEMState:
 
 
 PROFILE_PRESETS: dict[str, dict[str, Any]] = {
-    "deep": {
+    "train_deep": {
         "population": 48,
         "elite": 12,
         "games_per_cand": 20,
@@ -171,8 +179,8 @@ def run_autotrain(
     mean_std_path = runs_dir / "mean_std.json"
     summary_path = runs_dir / "summary.txt"
 
-    baseline = load_params(baseline_path)
-    league = load_league(league_dir)
+    baseline = load_params(baseline_path).with_thinking(ThinkingConfig())
+    league = [params.with_thinking(ThinkingConfig()) for params in load_league(league_dir)]
     opponents_pool = build_opponent_pool(opponents, baseline, league)
 
     seeds = [seed + idx for idx in range(games_per_cand)]
@@ -322,8 +330,8 @@ def run_autotrain(
                     seeds_file = default_seeds
 
             bench_result = bench(
-                candidate=cem_state.best_params,
-                baseline=baseline,
+                candidate=cem_state.best_params.with_thinking(ThinkingConfig()),
+                baseline=baseline.with_thinking(ThinkingConfig()),
                 league_dir=league_dir,
                 opponents=opponents,
                 num_players=players,
@@ -437,13 +445,13 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers = parser.add_subparsers(dest="command")
 
     run_parser = subparsers.add_parser("run", help="Запустить автотренинг")
-    run_parser.add_argument("--profile", type=str, default="deep")
+    run_parser.add_argument("--profile", type=str, default="train_deep")
     run_parser.add_argument("--epoch-iters", type=int, default=10)
-    run_parser.add_argument("--plateau-epochs", type=int, default=5)
+    run_parser.add_argument("--plateau-epochs", type=int, default=10)
     run_parser.add_argument("--eps-winrate", type=float, default=0.01)
     run_parser.add_argument("--eps-fitness", type=float, default=0.02)
-    run_parser.add_argument("--min-progress-games", type=int, default=200)
-    run_parser.add_argument("--delta", type=float, default=0.05)
+    run_parser.add_argument("--min-progress-games", type=int, default=400)
+    run_parser.add_argument("--delta", type=float, default=0.01)
     run_parser.add_argument("--seed", type=int, default=123)
     run_parser.add_argument("--players", type=int, default=6)
     run_parser.add_argument("--max-steps", type=int, default=2000)
@@ -469,7 +477,8 @@ def main(argv: list[str] | None = None) -> None:
         parser.print_help()
         return
 
-    profile_cfg = PROFILE_PRESETS.get(args.profile)
+    profile_name = "train_deep" if args.profile == "deep" else args.profile
+    profile_cfg = PROFILE_PRESETS.get(profile_name)
     if profile_cfg is None:
         raise ValueError(f"Неизвестный профиль: {args.profile}")
 
@@ -484,7 +493,7 @@ def main(argv: list[str] | None = None) -> None:
         runs_dir = Path("runs") / datetime.now().strftime("%Y%m%d-%H%M%S")
 
     run_autotrain(
-        profile=args.profile,
+        profile=profile_name,
         epoch_iters=args.epoch_iters,
         plateau_epochs=args.plateau_epochs,
         eps_winrate=args.eps_winrate,

@@ -91,6 +91,8 @@ class ThinkingConfig:
     rollouts_per_action: int = 12
     time_budget_ms: int = 0
     workers: int = 1
+    cache_enabled: bool = True
+    cache_size: int = 4096
 
 
 def _weight_key(decision: str, stage: str, feature: str) -> str:
@@ -231,6 +233,8 @@ class BotParams:
                 "rollouts_per_action": self.thinking.rollouts_per_action,
                 "time_budget_ms": self.thinking.time_budget_ms,
                 "workers": self.thinking.workers,
+                "cache_enabled": self.thinking.cache_enabled,
+                "cache_size": self.thinking.cache_size,
             }
         return payload
 
@@ -267,6 +271,8 @@ class BotParams:
                 ),
                 time_budget_ms=int(thinking_data.get("time_budget_ms", ThinkingConfig().time_budget_ms)),
                 workers=int(thinking_data.get("workers", ThinkingConfig().workers)),
+                cache_enabled=bool(thinking_data.get("cache_enabled", ThinkingConfig().cache_enabled)),
+                cache_size=int(thinking_data.get("cache_size", ThinkingConfig().cache_size)),
             )
         else:
             thinking = ThinkingConfig()

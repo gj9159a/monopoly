@@ -973,9 +973,13 @@ def _start_autotrain(
     profile: str,
     workers: int,
     plateau_epochs: int,
+    plateau_delta: float,
     epoch_iters: int,
+    population: int,
+    elite: int,
     min_games: int,
-    delta: float,
+    opponents: str,
+    cand_seats: str,
     seeds_file: str,
     league_dir: str,
     runs_dir: Path | None = None,
@@ -997,10 +1001,22 @@ def _start_autotrain(
         str(plateau_epochs),
         "--epoch-iters",
         str(epoch_iters),
+        "--population",
+        str(population),
+        "--elite",
+        str(elite),
         "--min-progress-games",
         str(min_games),
+        "--eps-winrate",
+        str(plateau_delta),
+        "--eps-fitness",
+        str(plateau_delta),
         "--delta",
-        str(delta),
+        str(plateau_delta),
+        "--opponents",
+        str(opponents),
+        "--cand-seats",
+        str(cand_seats),
         "--league-dir",
         league_dir,
         "--runs-dir",
@@ -1038,9 +1054,13 @@ def _stop_autotrain(phase: str) -> None:
 def _start_live_match(
     runs_dir: Path,
     params_path: Path,
+    thinking_enabled: bool,
     workers: int,
     time_per_decision: float,
     horizon: int,
+    rollouts_per_action: int,
+    cache_enabled: bool,
+    cache_size: int,
     seed: int,
 ) -> Path:
     out_path = runs_dir / "live_state.json"
@@ -1052,19 +1072,27 @@ def _start_live_match(
         "6",
         "--params",
         str(params_path),
-        "--mode",
-        "deep",
         "--workers",
         str(workers),
         "--time-per-decision-sec",
         str(time_per_decision),
         "--horizon-turns",
         str(horizon),
+        "--rollouts-per-action",
+        str(rollouts_per_action),
+        "--cache-size",
+        str(cache_size),
         "--seed",
         str(seed),
         "--out",
         str(out_path),
     ]
+    if thinking_enabled:
+        cmd.append("--thinking")
+    else:
+        cmd.extend(["--mode", "fast"])
+    if cache_enabled:
+        cmd.append("--cache")
     proc = subprocess.Popen(cmd, cwd=str(ROOT_DIR))
     st.session_state.live_proc = proc
     st.session_state.live_state_path = str(out_path)
@@ -1086,7 +1114,7 @@ def render_game_mode(cards_status: dict[str, Any] | None = None) -> None:
             placeholder="trained_params.json",
         )
         st.subheader("Thinking-mode")
-        thinking_enabled = st.checkbox("Включить thinking-mode", value=False)
+        thinking_enabled = st.checkbox("Включить thinking-mode", value=True)
         thinking_workers = st.number_input(
             "Thinking workers",
             min_value=1,
@@ -1097,23 +1125,31 @@ def render_game_mode(cards_status: dict[str, Any] | None = None) -> None:
         thinking_horizon = st.number_input(
             "Horizon turns",
             min_value=1,
-            value=30,
+            value=60,
             step=1,
             disabled=not thinking_enabled,
         )
         thinking_rollouts = st.number_input(
-            "Rollouts per action",
-            min_value=1,
-            value=12,
+            "Rollouts per action (0 = auto)",
+            min_value=0,
+            value=0,
             step=1,
             disabled=not thinking_enabled,
         )
         thinking_time_ms = st.number_input(
             "Time budget (ms, 0 = off)",
             min_value=0,
-            value=0,
+            value=2000,
             step=100,
             disabled=not thinking_enabled,
+        )
+        thinking_cache = st.checkbox("Cache", value=True, disabled=not thinking_enabled)
+        thinking_cache_size = st.number_input(
+            "Cache size",
+            min_value=0,
+            value=4096,
+            step=256,
+            disabled=not thinking_enabled or not thinking_cache,
         )
         new_game = st.button("Новая игра", type="primary")
         step_once = st.button("Шаг")
@@ -1129,12 +1165,17 @@ def render_game_mode(cards_status: dict[str, Any] | None = None) -> None:
             except Exception as exc:
                 st.warning(f"Не удалось загрузить параметры: {exc}. Использую дефолтные.")
         if thinking_enabled:
+            rollouts_value = int(thinking_rollouts)
+            if rollouts_value <= 0:
+                rollouts_value = 12
             config = ThinkingConfig(
                 enabled=True,
                 horizon_turns=int(thinking_horizon),
-                rollouts_per_action=int(thinking_rollouts),
+                rollouts_per_action=rollouts_value,
                 time_budget_ms=int(thinking_time_ms),
                 workers=int(thinking_workers),
+                cache_enabled=bool(thinking_cache),
+                cache_size=int(thinking_cache_size),
             )
             bot_params = bot_params.with_thinking(config)
         else:
@@ -1224,15 +1265,17 @@ def render_training_mode() -> None:
 
     with st.sidebar:
         st.header("Тренировка")
-        preset = "Deep (максимально умно)"
+        preset = "Train Deep (веса, эффективно)"
         st.caption(f"Preset: {preset}")
         workers = st.number_input("Workers", min_value=1, value=_default_workers(), step=1)
-        time_per_decision = st.number_input("Time per decision (sec)", min_value=0.1, value=3.0, step=0.5)
-        horizon = st.number_input("Horizon turns", min_value=1, value=60, step=1)
-        plateau_epochs = st.number_input("Plateau epochs", min_value=1, value=5, step=1)
+        population = st.number_input("Population", min_value=4, value=48, step=2)
+        elite = st.number_input("Elite", min_value=1, value=12, step=1)
         epoch_iters = st.number_input("Epoch iters", min_value=1, value=10, step=1)
-        min_games = st.number_input("Min games", min_value=10, value=200, step=10)
-        delta = st.number_input("Delta", min_value=0.0, value=0.05, step=0.01, format="%.2f")
+        plateau_epochs = st.number_input("Plateau epochs", min_value=1, value=10, step=1)
+        plateau_delta = st.number_input("Plateau delta", min_value=0.0, value=0.01, step=0.01, format="%.2f")
+        min_games = st.number_input("Min games", min_value=10, value=400, step=20)
+        opponents = st.selectbox("Opponents", options=["baseline", "league", "mixed"], index=2)
+        seat_rotation = st.checkbox("Seat rotation", value=True)
         seeds_file = st.text_input(
             "Seeds file",
             value=str(ROOT_DIR / "monopoly" / "data" / "seeds.txt"),
@@ -1272,12 +1315,16 @@ def render_training_mode() -> None:
             st.warning("Тренировка уже запущена.")
         else:
             _start_autotrain(
-                profile="deep",
+                profile="train_deep",
                 workers=int(workers),
                 plateau_epochs=int(plateau_epochs),
+                plateau_delta=float(plateau_delta),
                 epoch_iters=int(epoch_iters),
+                population=int(population),
+                elite=int(elite),
                 min_games=int(min_games),
-                delta=float(delta),
+                opponents=str(opponents),
+                cand_seats="rotate" if seat_rotation else "all",
                 seeds_file=seeds_file,
                 league_dir=league_dir,
             )
@@ -1292,12 +1339,16 @@ def render_training_mode() -> None:
         runs_dir_raw = st.session_state.get("train_runs_dir")
         if runs_dir_raw:
             _start_autotrain(
-                profile="deep",
+                profile="train_deep",
                 workers=int(workers),
                 plateau_epochs=int(plateau_epochs),
+                plateau_delta=float(plateau_delta),
                 epoch_iters=int(epoch_iters),
+                population=int(population),
+                elite=int(elite),
                 min_games=int(min_games),
-                delta=float(delta),
+                opponents=str(opponents),
+                cand_seats="rotate" if seat_rotation else "all",
                 seeds_file=seeds_file,
                 league_dir=league_dir,
                 runs_dir=Path(runs_dir_raw),
@@ -1404,9 +1455,13 @@ def render_training_mode() -> None:
                     _start_live_match(
                         runs_dir,
                         best_path,
-                        workers=int(workers),
-                        time_per_decision=float(time_per_decision),
-                        horizon=int(horizon),
+                        thinking_enabled=True,
+                        workers=int(_default_workers()),
+                        time_per_decision=2.0,
+                        horizon=60,
+                        rollouts_per_action=0,
+                        cache_enabled=True,
+                        cache_size=4096,
                         seed=42,
                     )
 
@@ -1424,9 +1479,25 @@ def render_live_mode(cards_status: dict[str, Any] | None = None) -> None:
     with st.sidebar:
         st.header("Live матч")
         params_path = st.text_input("Путь к params", value=default_best)
+        thinking_enabled = st.checkbox("Thinking-mode", value=True)
         workers = st.number_input("Workers", min_value=1, value=_default_workers(), step=1)
-        time_per_decision = st.number_input("Time per decision (sec)", min_value=0.1, value=3.0, step=0.5)
+        time_per_decision = st.number_input("Time per decision (sec)", min_value=0.1, value=2.0, step=0.5)
         horizon = st.number_input("Horizon turns", min_value=1, value=60, step=1)
+        rollouts_per_action = st.number_input(
+            "Rollouts per action (0 = auto)",
+            min_value=0,
+            value=0,
+            step=1,
+            disabled=not thinking_enabled,
+        )
+        cache_enabled = st.checkbox("Cache", value=True, disabled=not thinking_enabled)
+        cache_size = st.number_input(
+            "Cache size",
+            min_value=0,
+            value=4096,
+            step=256,
+            disabled=not thinking_enabled or not cache_enabled,
+        )
         seed = st.number_input("Seed", min_value=0, max_value=999999, value=42, step=1)
         refresh_ms = st.slider("Обновление UI (мс)", min_value=500, max_value=1500, value=1000, step=100)
         start_btn = st.button("Запустить матч 6 deep-ботов", type="primary")
@@ -1446,9 +1517,13 @@ def render_live_mode(cards_status: dict[str, Any] | None = None) -> None:
         _start_live_match(
             runs_dir,
             params,
+            thinking_enabled=bool(thinking_enabled),
             workers=int(workers),
             time_per_decision=float(time_per_decision),
             horizon=int(horizon),
+            rollouts_per_action=int(rollouts_per_action),
+            cache_enabled=bool(cache_enabled),
+            cache_size=int(cache_size),
             seed=int(seed),
         )
 

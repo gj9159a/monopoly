@@ -8,8 +8,9 @@ from pathlib import Path
 from uuid import uuid4
 
 from monopoly.engine import create_engine
-from monopoly.params import BotParams, decide_build_actions, save_params
+from monopoly.params import BotParams, ThinkingConfig, decide_build_actions, save_params
 from monopoly.train import (
+    LAST_TRAIN_THINKING_USED,
     build_eval_cases,
     build_opponent_pool,
     evaluate_candidates,
@@ -321,3 +322,21 @@ def test_bench_smoke() -> None:
     )
     assert result.returncode == 0
     _cleanup_tmp(tmp_path)
+
+
+def test_train_disables_thinking() -> None:
+    candidate = BotParams().with_thinking(ThinkingConfig(enabled=True, horizon_turns=5))
+    opponents_pool = [BotParams().with_thinking(ThinkingConfig(enabled=True, horizon_turns=5))]
+    results, _ = evaluate_candidates(
+        candidates=[candidate],
+        seeds=[1],
+        num_players=2,
+        max_steps=10,
+        opponents_pool=opponents_pool,
+        cand_seats="rotate",
+        seed=3,
+        workers=1,
+        cache={},
+    )
+    assert results
+    assert LAST_TRAIN_THINKING_USED is False
