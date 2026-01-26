@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import math
 import random
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -9,7 +10,7 @@ from typing import Any
 
 from .autotrain import run_autotrain
 from .io_utils import read_json, write_json_atomic
-from .league import add_to_league, load_index, resolve_entry_path
+from .league import add_to_league, hash_params, load_index, resolve_entry_path
 from .params import BotParams, ThinkingConfig, load_params
 
 DEFAULT_TOP_K_POOL = 8
@@ -18,6 +19,8 @@ DEFAULT_MAX_NEW_BESTS = 16
 DEFAULT_META_PLATEAU_CYCLES = 5
 DEFAULT_BOOTSTRAP_MIN = 4
 DEFAULT_EPS_IMPROVEMENT = 1e-4
+CYCLE_SEED_STEP = 10007
+POOL_SNAPSHOT_STEP = 9973
 
 STATUS_FILE = "status.json"
 
@@ -69,6 +72,19 @@ def _top_k_improved(prev: TopKStats, new: TopKStats, eps: float) -> bool:
     return False
 
 
+def _fitness_is_valid(value: float | None) -> bool:
+    if value is None:
+        return False
+    return math.isfinite(value)
+
+
+def _find_entry_by_hash(items: list[dict[str, Any]], params_hash: str) -> dict[str, Any] | None:
+    for entry in items:
+        if str(entry.get("hash")) == params_hash:
+            return entry
+    return None
+
+
 def _snapshot_pool(
     items: list[dict[str, Any]],
     rng: random.Random,
@@ -103,6 +119,35 @@ def _load_best_params(best_path: Path) -> BotParams:
     return load_params(best_path).with_thinking(ThinkingConfig())
 
 
+def _bump_reject_reason(status: dict[str, Any], reason: str) -> None:
+    reasons = status.get("candidates_rejected_reason")
+    if not isinstance(reasons, dict):
+        reasons = {}
+        status["candidates_rejected_reason"] = reasons
+    reasons[reason] = int(reasons.get(reason, 0) or 0) + 1
+
+
+def _write_dedup_example(
+    cycle_dir: Path,
+    candidate_hash: str,
+    candidate_fitness: float | None,
+    existing_entry: dict[str, Any],
+) -> None:
+    payload = {
+        "candidate_hash": candidate_hash,
+        "candidate_fitness": candidate_fitness,
+        "existing": {
+            "rank": existing_entry.get("rank"),
+            "name": existing_entry.get("name"),
+            "hash": existing_entry.get("hash"),
+            "fitness": existing_entry.get("fitness"),
+            "created_at": existing_entry.get("created_at"),
+            "path": existing_entry.get("path"),
+        },
+    }
+    write_json_atomic(cycle_dir / "dedup_example.json", payload)
+
+
 def _ensure_status_defaults(status: dict[str, Any], runs_dir: Path) -> dict[str, Any]:
     status.setdefault("current_phase", "training")
     status.setdefault("started_at", _utc_now())
@@ -116,6 +161,13 @@ def _ensure_status_defaults(status: dict[str, Any], runs_dir: Path) -> dict[str,
     status.setdefault("pool_snapshot", [])
     status.setdefault("bootstrap", False)
     status.setdefault("league_size", 0)
+    status.setdefault("candidates_produced", 0)
+    status.setdefault("candidates_evaluated", 0)
+    status.setdefault("candidates_eligible_for_league", 0)
+    status.setdefault("candidates_added_to_league", 0)
+    status.setdefault("candidates_deduped", 0)
+    if not isinstance(status.get("candidates_rejected_reason"), dict):
+        status["candidates_rejected_reason"] = {}
     return status
 
 
@@ -137,11 +189,12 @@ def _bench_seed_source() -> str:
 
 def _derived_seed_policy(bench_seed_source: str) -> dict[str, str]:
     return {
-        "eval_seeds": "seed + idx (0..games_per_cand-1)",
-        "seat_rotation": "start = seed % players (cand_seats=rotate)",
+        "cycle_seed": "master_seed + cycle_index*10007",
+        "eval_seeds": "cycle_seed + idx (0..games_per_cand-1)",
+        "seat_rotation": "start = cycle_seed % players (cand_seats=rotate)",
         "game_seed": "eval_seed passed to create_engine",
-        "opponents_rng": "seed + game_seed*1013 + seat*917 + case_index*37",
-        "pool_snapshot_rng": "seed + cycle_index*9973",
+        "opponents_rng": "cycle_seed + game_seed*1013 + seat*917 + case_index*37",
+        "pool_snapshot_rng": "master_seed + cycle_index*9973",
         "bench_seeds": bench_seed_source,
     }
 
@@ -150,16 +203,18 @@ def _append_seeds_used(
     path: Path,
     cycle_index: int,
     master_seed: int,
+    cycle_seed: int,
     games_per_cand: int,
     pool_snapshot_seed: int,
     bench_seed_source: str,
 ) -> None:
     count = max(1, min(10, int(games_per_cand)))
-    eval_seeds = [master_seed + idx for idx in range(count)]
+    eval_seeds = [cycle_seed + idx for idx in range(count)]
     seeds_text = ",".join(str(value) for value in eval_seeds)
     line = (
-        f"cycle={cycle_index:03d} eval_seeds[:{count}]={seeds_text} "
-        f"pool_snapshot_seed={pool_snapshot_seed} bench_seeds={bench_seed_source}"
+        f"cycle={cycle_index:03d} master_seed={master_seed} cycle_seed={cycle_seed} "
+        f"eval_seeds[:{count}]={seeds_text} pool_snapshot_seed={pool_snapshot_seed} "
+        f"bench_seeds={bench_seed_source}"
     )
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("a", encoding="utf-8") as handle:
@@ -246,9 +301,10 @@ def run_autoevolve(
     print(
         "seed: "
         f"master={seed}; derived="
-        "eval_seeds=seed+idx; seat_rotation=start=seed%players; game_seed=eval_seed; "
-        "opponents_rng=seed+game_seed*1013+seat*917+case_index*37; "
-        f"pool_snapshot_rng=seed+cycle_index*9973; bench_seeds={bench_seed_source}"
+        "cycle_seed=master+cycle_index*10007; eval_seeds=cycle_seed+idx; "
+        "seat_rotation=start=cycle_seed%players; game_seed=eval_seed; "
+        "opponents_rng=cycle_seed+game_seed*1013+seat*917+case_index*37; "
+        f"pool_snapshot_rng=master+cycle_index*9973; bench_seeds={bench_seed_source}"
     )
 
     current_cycle = int(status.get("current_cycle", 0))
@@ -269,6 +325,12 @@ def run_autoevolve(
             cycle_index = current_cycle
             pool_snapshot = status.get("pool_snapshot", [])
             bootstrap = bool(status.get("bootstrap", False))
+            cycle_seed = status.get("cycle_seed")
+            if not isinstance(cycle_seed, int):
+                cycle_seed = seed + cycle_index * CYCLE_SEED_STEP
+            pool_snapshot_seed = status.get("pool_snapshot_seed")
+            if not isinstance(pool_snapshot_seed, int):
+                pool_snapshot_seed = seed + cycle_index * POOL_SNAPSHOT_STEP
             prev_topk = TopKStats(
                 hashes=set(status.get("prev_topk_hashes", []) or []),
                 top1_fitness=float(status.get("prev_top1_fitness", float("-inf"))),
@@ -283,10 +345,12 @@ def run_autoevolve(
             prev_topk = prev_topk_stats
             league_size = len(items)
             bootstrap = league_size < bootstrap_min_league_for_pool
+            cycle_seed = seed + cycle_index * CYCLE_SEED_STEP
+            pool_snapshot_seed = seed + cycle_index * POOL_SNAPSHOT_STEP
             if bootstrap:
                 pool_snapshot = []
             else:
-                rng = random.Random(seed + cycle_index * 9973)
+                rng = random.Random(pool_snapshot_seed)
                 pool_snapshot = _snapshot_pool(items, rng, top_k_pool, league_cap)
 
             status.update(
@@ -296,6 +360,8 @@ def run_autoevolve(
                     "pool_snapshot": pool_snapshot,
                     "bootstrap": bootstrap,
                     "league_size": league_size,
+                    "cycle_seed": cycle_seed,
+                    "pool_snapshot_seed": pool_snapshot_seed,
                     "prev_topk_hashes": sorted(prev_topk.hashes),
                     "prev_top1_fitness": prev_topk.top1_fitness,
                     "prev_topk_mean": prev_topk.mean_fitness,
@@ -306,8 +372,9 @@ def run_autoevolve(
                 seeds_used_path,
                 cycle_index=cycle_index,
                 master_seed=int(seed),
+                cycle_seed=int(cycle_seed),
                 games_per_cand=int(games_per_cand),
-                pool_snapshot_seed=int(seed + cycle_index * 9973),
+                pool_snapshot_seed=int(pool_snapshot_seed),
                 bench_seed_source=bench_seed_source,
             )
 
@@ -328,6 +395,8 @@ def run_autoevolve(
                 "current_cycle": cycle_index,
                 "current_cycle_dir": str(cycle_dir),
                 "current_phase": "training",
+                "cycle_seed": cycle_seed,
+                "pool_snapshot_seed": pool_snapshot_seed,
             }
         )
         _write_status(status_path, status)
@@ -340,7 +409,7 @@ def run_autoevolve(
             eps_fitness=eps_fitness,
             min_progress_games=min_progress_games,
             delta=delta,
-            seed=seed,
+            seed=cycle_seed,
             players=6,
             max_steps=max_steps,
             population=population,
@@ -365,9 +434,9 @@ def run_autoevolve(
 
         new_bests_count += 1
         cycle_status = _read_cycle_status(cycle_dir) or {}
-        best_fitness = _coerce_fitness(cycle_status.get("best_fitness"))
-        if best_fitness is None:
-            best_fitness = 0.0
+        best_fitness_raw = _coerce_fitness(cycle_status.get("best_fitness"))
+        fitness_valid = _fitness_is_valid(best_fitness_raw)
+        best_fitness = best_fitness_raw if fitness_valid else 0.0
         best_path = cycle_dir / "best.json"
         best_params = _load_best_params(best_path)
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -375,12 +444,55 @@ def run_autoevolve(
             "name": f"best_{timestamp}_c{cycle_index:03d}",
             "note": f"cycle={cycle_index}; best_fitness={best_fitness:.6f}",
         }
-        added, changed_topk, rank = add_to_league(
-            params=best_params,
-            fitness=best_fitness,
-            meta=meta,
-            league_dir=league_dir,
-            top_k=league_cap,
+        status["candidates_produced"] = int(status.get("candidates_produced", 0) or 0) + 1
+        status["candidates_evaluated"] = int(status.get("candidates_evaluated", 0) or 0) + 1
+
+        added = False
+        changed_topk = False
+        rank = None
+        params_hash = hash_params(best_params)
+        index_before_add = load_index(league_dir)
+        existing_entry = _find_entry_by_hash(index_before_add.get("items", []), params_hash)
+        add_reason = "added"
+
+        if not fitness_valid:
+            _bump_reject_reason(status, "invalid_fitness")
+            add_reason = "invalid_fitness"
+        elif existing_entry is not None:
+            status["candidates_deduped"] = int(status.get("candidates_deduped", 0) or 0) + 1
+            _bump_reject_reason(status, "dedup")
+            rank = existing_entry.get("rank")
+            add_reason = "dedup"
+            _write_dedup_example(cycle_dir, params_hash, best_fitness_raw, existing_entry)
+        else:
+            status["candidates_eligible_for_league"] = int(
+                status.get("candidates_eligible_for_league", 0) or 0
+            ) + 1
+            added, changed_topk, rank = add_to_league(
+                params=best_params,
+                fitness=best_fitness,
+                meta=meta,
+                league_dir=league_dir,
+                top_k=league_cap,
+            )
+            if added and rank is not None:
+                status["candidates_added_to_league"] = int(
+                    status.get("candidates_added_to_league", 0) or 0
+                ) + 1
+                add_reason = "added"
+            elif added and rank is None:
+                _bump_reject_reason(status, "pruned_top_k")
+                add_reason = "pruned_top_k"
+            else:
+                _bump_reject_reason(status, "not_added")
+                add_reason = "not_added"
+
+        short_hash = params_hash[:8]
+        final_added = bool(added and rank is not None)
+        print(
+            "best: "
+            f"fitness={best_fitness:.6f} hash={short_hash} add={'yes' if final_added else 'no'} "
+            f"reason={add_reason}"
         )
 
         index_after = load_index(league_dir)
@@ -400,7 +512,7 @@ def run_autoevolve(
                 "meta_plateau": meta_plateau,
                 "league_size": len(items_after),
                 "last_best_fitness": float(best_fitness),
-                "last_best_added": bool(added),
+                "last_best_added": final_added,
                 "last_best_rank": rank,
                 "last_best_changed_topk": bool(changed_topk),
                 "topk_hashes": sorted(new_topk.hashes),

@@ -32,6 +32,10 @@ def _hash_params(params: BotParams) -> str:
     return _hash_text(payload)
 
 
+def hash_params(params: BotParams) -> str:
+    return _hash_params(params)
+
+
 def _normalize_meta(meta: Any) -> dict[str, Any]:
     if meta is None:
         return {}
