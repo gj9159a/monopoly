@@ -351,6 +351,7 @@ def run_autotrain(
                 delta=delta,
                 seeds_file=seeds_file,
                 opponents_pool=list(opponents_pool),
+                workers=workers,
             )
             write_json_atomic(last_bench_path, bench_result)
             save_params(cem_state.best_params, best_path)
@@ -468,11 +469,11 @@ def build_parser() -> argparse.ArgumentParser:
     run_parser = subparsers.add_parser("run", help="Запустить автотренинг")
     run_parser.add_argument("--profile", type=str, default="train_deep")
     run_parser.add_argument("--epoch-iters", type=int, default=10)
-    run_parser.add_argument("--plateau-epochs", type=int, default=10)
+    run_parser.add_argument("--plateau-epochs", type=int, default=3)
     run_parser.add_argument("--eps-winrate", type=float, default=0.01)
     run_parser.add_argument("--eps-fitness", type=float, default=0.02)
-    run_parser.add_argument("--min-progress-games", type=int, default=400)
-    run_parser.add_argument("--delta", type=float, default=0.005)
+    run_parser.add_argument("--min-progress-games", type=int, default=500)
+    run_parser.add_argument("--delta", type=float, default=1.0)
     run_parser.add_argument("--seed", type=int, default=123)
     run_parser.add_argument("--players", type=int, default=6)
     run_parser.add_argument("--max-steps", type=int, default=2000)

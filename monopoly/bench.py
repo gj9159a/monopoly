@@ -3,6 +3,8 @@ from __future__ import annotations
 import argparse
 import math
 import os
+import multiprocessing as mp
+import random
 from pathlib import Path
 from statistics import mean
 
@@ -52,6 +54,47 @@ def load_seed_pack(seeds_file: Path | None, seed: int, games: int) -> list[int]:
     return [seed + idx for idx in range(games)]
 
 
+def _bench_case(
+    task: tuple[
+        BotParams,
+        list[BotParams],
+        int,
+        int,
+        int,
+        int,
+        int,
+        int,
+    ]
+) -> tuple[float, float, float, float, float, int]:
+    candidate, pool, num_players, game_seed, seat, case_index, seed, max_steps = task
+    rng_seed = seed + game_seed * 1013 + seat * 917 + case_index * 37
+    rng = random.Random(rng_seed)
+    opponents_params = [pool[rng.randrange(len(pool))] for _ in range(num_players - 1)]
+    params_by_seat = []
+    opp_iter = iter(opponents_params)
+    for seat_idx in range(num_players):
+        if seat_idx == seat:
+            params_by_seat.append(candidate)
+        else:
+            params_by_seat.append(next(opp_iter))
+    state, _, steps = play_game(params_by_seat, num_players, game_seed, max_steps)
+    ended_by_cutoff = not state.game_over
+    placements = placements_by_net_worth(state)
+    placement = placements.get(seat, num_players)
+    success = win_like_outcome(placement, state.winner_id == seat, ended_by_cutoff)
+    place_score_value = place_to_score(placement)
+    net_worth = _net_worth(state, seat)
+    others = [
+        _net_worth(state, player_id)
+        for player_id in range(num_players)
+        if player_id != seat
+    ]
+    others_mean = sum(others) / len(others) if others else 0.0
+    advantage = math.tanh((net_worth - others_mean) / ADVANTAGE_SCALE)
+    cutoff_flag = 1.0 if ended_by_cutoff else 0.0
+    return success, place_score_value, advantage, cutoff_flag, net_worth, steps
+
+
 def bench(
     candidate: BotParams,
     baseline: BotParams,
@@ -66,6 +109,7 @@ def bench(
     delta: float,
     seeds_file: Path | None = None,
     opponents_pool: list[BotParams] | None = None,
+    workers: int = 1,
 ) -> dict[str, float | str]:
     if opponents_pool is None:
         league = load_league(league_dir)
@@ -84,47 +128,61 @@ def bench(
     steps_list: list[int] = []
     stop_reason = "full"
 
-    for idx, (game_seed, seat) in enumerate(cases):
-        rng_seed = seed + game_seed * 1013 + seat * 917 + idx * 37
-        rng = __import__("random").Random(rng_seed)
-        opponents_params = [pool[rng.randrange(len(pool))] for _ in range(num_players - 1)]
-        params_by_seat = []
-        opp_iter = iter(opponents_params)
-        for seat_idx in range(num_players):
-            if seat_idx == seat:
-                params_by_seat.append(candidate)
-            else:
-                params_by_seat.append(next(opp_iter))
-        state, _, steps = play_game(params_by_seat, num_players, game_seed, max_steps)
-        ended_by_cutoff = not state.game_over
-        placements = placements_by_net_worth(state)
-        placement = placements.get(seat, num_players)
-        success = win_like_outcome(placement, state.winner_id == seat, ended_by_cutoff)
+    tasks = [
+        (candidate, pool, num_players, game_seed, seat, idx, seed, max_steps)
+        for idx, (game_seed, seat) in enumerate(cases)
+    ]
+
+    def _apply_result(result: tuple[float, float, float, float, float, int]) -> None:
+        nonlocal wins_eff, net_sum, net_sum_sq, cutoff_count
+        success, place_score_value, advantage, cutoff_flag, net_worth, steps = result
         wins_eff += success
-        place_scores.append(place_to_score(placement))
-        net_worth = _net_worth(state, seat)
-        others = [
-            _net_worth(state, player_id)
-            for player_id in range(num_players)
-            if player_id != seat
-        ]
-        others_mean = sum(others) / len(others) if others else 0.0
-        advantages.append(math.tanh((net_worth - others_mean) / ADVANTAGE_SCALE))
-        if ended_by_cutoff:
+        place_scores.append(place_score_value)
+        advantages.append(advantage)
+        if cutoff_flag:
             cutoff_count += 1
         net_sum += net_worth
         net_sum_sq += net_worth * net_worth
         steps_list.append(steps)
+
+    def _should_stop() -> str | None:
         games_played = len(steps_list)
         min_required = min(min_games, len(cases))
-        if games_played >= min_required:
-            ci_low, ci_high = _win_rate_ci(wins_eff, games_played, FITNESS_CONFIDENCE)
-            if ci_low >= 0.5 + delta:
-                stop_reason = "above"
-                break
-            if ci_high <= 0.5:
-                stop_reason = "below"
-                break
+        if games_played < min_required:
+            return None
+        ci_low, ci_high = _win_rate_ci(wins_eff, games_played, FITNESS_CONFIDENCE)
+        if ci_low >= 0.5 + delta:
+            return "above"
+        if ci_high <= 0.5:
+            return "below"
+        return None
+
+    if tasks:
+        if workers > 1 and len(tasks) > 1:
+            ctx = mp.get_context("spawn")
+            pool_proc = ctx.Pool(processes=workers)
+            early_stop = False
+            try:
+                for result in pool_proc.imap(_bench_case, tasks, chunksize=1):
+                    _apply_result(result)
+                    reason = _should_stop()
+                    if reason is not None:
+                        stop_reason = reason
+                        early_stop = True
+                        break
+            finally:
+                if early_stop:
+                    pool_proc.terminate()
+                else:
+                    pool_proc.close()
+                pool_proc.join()
+        else:
+            for task in tasks:
+                _apply_result(_bench_case(task))
+                reason = _should_stop()
+                if reason is not None:
+                    stop_reason = reason
+                    break
 
     games_played = len(steps_list)
     win_rate = wins_eff / max(1, games_played)
