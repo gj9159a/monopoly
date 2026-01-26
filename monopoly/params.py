@@ -8,7 +8,10 @@ from typing import Any, Iterable
 import yaml
 
 from .features import (
+    cell_heat,
     denial_value,
+    group_heat,
+    group_heat_vs_base,
     jail_exit_heat_group,
     landing_prob_group,
     positional_threat_others,
@@ -24,6 +27,9 @@ AUCTION_FEATURES = [
     "bias",
     "base_value",
     "group_strength",
+    "group_heat",
+    "group_heat_vs_base",
+    "cell_heat",
     "landing_prob_group",
     "jail_exit_heat_group",
     "completes_monopoly",
@@ -48,6 +54,9 @@ BUILD_FEATURES = [
     "roi",
     "rent_delta",
     "group_strength",
+    "group_heat",
+    "group_heat_vs_base",
+    "cell_heat",
     "landing_prob_group",
     "jail_exit_heat_group",
     "cash_after_build",
@@ -71,6 +80,9 @@ MORTGAGE_FEATURES = [
     "low_value",
     "breaks_monopoly",
     "has_buildings",
+    "group_heat",
+    "group_heat_vs_base",
+    "cell_heat",
     "landing_prob_group",
     "jail_exit_heat_group",
     "is_railroad",
@@ -146,6 +158,9 @@ def _default_weights() -> dict[str, dict[str, dict[str, float]]]:
         "bias": 0.0,
         "base_value": 1.0,
         "group_strength": 0.5,
+        "group_heat": 0.0,
+        "group_heat_vs_base": 0.0,
+        "cell_heat": 0.0,
         "landing_prob_group": 0.0,
         "jail_exit_heat_group": 0.0,
         "completes_monopoly": 1.2,
@@ -169,6 +184,9 @@ def _default_weights() -> dict[str, dict[str, dict[str, float]]]:
         "roi": 1.0,
         "rent_delta": 0.4,
         "group_strength": 0.5,
+        "group_heat": 0.0,
+        "group_heat_vs_base": 0.0,
+        "cell_heat": 0.0,
         "landing_prob_group": 0.0,
         "jail_exit_heat_group": 0.0,
         "cash_after_build": 0.7,
@@ -191,6 +209,9 @@ def _default_weights() -> dict[str, dict[str, dict[str, float]]]:
         "low_value": 0.9,
         "breaks_monopoly": -1.2,
         "has_buildings": -0.8,
+        "group_heat": 0.0,
+        "group_heat_vs_base": 0.0,
+        "cell_heat": 0.0,
         "landing_prob_group": 0.0,
         "jail_exit_heat_group": 0.0,
         "is_railroad": 0.1,
@@ -682,6 +703,9 @@ def decide_auction_bid(
         if cash_after < 0:
             continue
         group_strength = _group_strength(state, cell.group)
+        group_heat_score = group_heat(state, cell.group)
+        group_heat_delta = group_heat_vs_base(state, cell.group)
+        cell_heat_score = cell_heat(state, cell.index)
         landing_prob = landing_prob_group(state, cell.group)
         jail_heat = jail_exit_heat_group(state, cell.group)
         completes = 0.0
@@ -706,6 +730,9 @@ def decide_auction_bid(
             "bias": 1.0,
             "base_value": float(cell.price) / 100.0,
             "group_strength": group_strength,
+            "group_heat": group_heat_score,
+            "group_heat_vs_base": group_heat_delta,
+            "cell_heat": cell_heat_score,
             "landing_prob_group": landing_prob,
             "jail_exit_heat_group": jail_heat,
             "completes_monopoly": completes,
@@ -793,6 +820,9 @@ def decide_build_actions(state: GameState, player: Player, params: BotParams) ->
                 "roi": rent_delta / max(1.0, cost),
                 "rent_delta": rent_delta / 100.0,
                 "group_strength": _group_strength(state, cell.group),
+                "group_heat": group_heat(state, cell.group),
+                "group_heat_vs_base": group_heat_vs_base(state, cell.group),
+                "cell_heat": cell_heat(state, cell.index),
                 "landing_prob_group": landing_prob_group(state, cell.group),
                 "jail_exit_heat_group": jail_exit_heat_group(state, cell.group),
                 "cash_after_build": (available_cash - cost) / start_cash,
@@ -867,6 +897,9 @@ def decide_liquidation(
                     "low_value": 1.0 / (1.0 + estimate_asset_value(state, player, cell, params) / 100.0),
                     "breaks_monopoly": 1.0 if cell.group and _owns_group(state, player.player_id, cell.group) else 0.0,
                     "has_buildings": 1.0,
+                    "group_heat": group_heat(state, cell.group),
+                    "group_heat_vs_base": group_heat_vs_base(state, cell.group),
+                    "cell_heat": cell_heat(state, cell.index),
                     "landing_prob_group": landing_prob_group(state, cell.group),
                     "jail_exit_heat_group": jail_exit_heat_group(state, cell.group),
                     "is_railroad": 1.0 if cell.cell_type == "railroad" else 0.0,
@@ -891,6 +924,9 @@ def decide_liquidation(
                 "low_value": 1.0 / (1.0 + estimate_asset_value(state, player, cell, params) / 100.0),
                 "breaks_monopoly": 1.0 if cell.group and _owns_group(state, player.player_id, cell.group) else 0.0,
                 "has_buildings": 0.0,
+                "group_heat": group_heat(state, cell.group),
+                "group_heat_vs_base": group_heat_vs_base(state, cell.group),
+                "cell_heat": cell_heat(state, cell.index),
                 "landing_prob_group": landing_prob_group(state, cell.group),
                 "jail_exit_heat_group": jail_exit_heat_group(state, cell.group),
                 "is_railroad": 1.0 if cell.cell_type == "railroad" else 0.0,
