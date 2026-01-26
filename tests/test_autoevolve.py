@@ -58,6 +58,12 @@ def test_autoevolve_bootstrap_adds_best(tmp_path: Path) -> None:
     assert index["items"]
     status = read_json(runs_dir / "status.json", default={})
     assert status.get("new_bests_count") == 1
+    assert status.get("master_seed") == 1
+    policy = status.get("derived_seed_policy")
+    assert isinstance(policy, dict)
+    assert "opponents_rng" in policy
+    seeds_used = (runs_dir / "seeds_used.txt").read_text(encoding="utf-8")
+    assert "cycle=001" in seeds_used
 
 
 def test_autoevolve_meta_cycle_updates_index(tmp_path: Path) -> None:

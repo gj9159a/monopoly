@@ -128,6 +128,45 @@ def _write_status(status_path: Path, status: dict[str, Any]) -> None:
     write_json_atomic(status_path, status)
 
 
+def _bench_seed_source() -> str:
+    default_seeds = Path("monopoly/data/seeds.txt")
+    if default_seeds.exists():
+        return str(default_seeds)
+    return "seed+idx"
+
+
+def _derived_seed_policy(bench_seed_source: str) -> dict[str, str]:
+    return {
+        "eval_seeds": "seed + idx (0..games_per_cand-1)",
+        "seat_rotation": "start = seed % players (cand_seats=rotate)",
+        "game_seed": "eval_seed passed to create_engine",
+        "opponents_rng": "seed + game_seed*1013 + seat*917 + case_index*37",
+        "pool_snapshot_rng": "seed + cycle_index*9973",
+        "bench_seeds": bench_seed_source,
+    }
+
+
+def _append_seeds_used(
+    path: Path,
+    cycle_index: int,
+    master_seed: int,
+    games_per_cand: int,
+    pool_snapshot_seed: int,
+    bench_seed_source: str,
+) -> None:
+    count = max(1, min(10, int(games_per_cand)))
+    eval_seeds = [master_seed + idx for idx in range(count)]
+    seeds_text = ",".join(str(value) for value in eval_seeds)
+    line = (
+        f"cycle={cycle_index:03d} eval_seeds[:{count}]={seeds_text} "
+        f"pool_snapshot_seed={pool_snapshot_seed} bench_seeds={bench_seed_source}"
+    )
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(line)
+        handle.write("\n")
+
+
 def _cycle_status_path(cycle_dir: Path) -> Path:
     return cycle_dir / "status.json"
 
@@ -178,6 +217,8 @@ def run_autoevolve(
             status = existing
 
     status = _ensure_status_defaults(status, runs_dir)
+    bench_seed_source = _bench_seed_source()
+    derived_policy = _derived_seed_policy(bench_seed_source)
     status.update(
         {
             "top_k_pool": int(top_k_pool),
@@ -197,9 +238,18 @@ def run_autoevolve(
             "delta": float(delta),
             "max_steps": int(max_steps),
             "workers": int(workers),
+            "master_seed": int(seed),
+            "derived_seed_policy": derived_policy,
         }
     )
     _write_status(status_path, status)
+    print(
+        "seed: "
+        f"master={seed}; derived="
+        "eval_seeds=seed+idx; seat_rotation=start=seed%players; game_seed=eval_seed; "
+        "opponents_rng=seed+game_seed*1013+seat*917+case_index*37; "
+        f"pool_snapshot_rng=seed+cycle_index*9973; bench_seeds={bench_seed_source}"
+    )
 
     current_cycle = int(status.get("current_cycle", 0))
     new_bests_count = int(status.get("new_bests_count", 0))
@@ -250,6 +300,15 @@ def run_autoevolve(
                     "prev_top1_fitness": prev_topk.top1_fitness,
                     "prev_topk_mean": prev_topk.mean_fitness,
                 }
+            )
+            seeds_used_path = runs_dir / "seeds_used.txt"
+            _append_seeds_used(
+                seeds_used_path,
+                cycle_index=cycle_index,
+                master_seed=int(seed),
+                games_per_cand=int(games_per_cand),
+                pool_snapshot_seed=int(seed + cycle_index * 9973),
+                bench_seed_source=bench_seed_source,
             )
 
         if cycle_dir is None:
