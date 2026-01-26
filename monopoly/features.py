@@ -18,9 +18,50 @@ DICE_SUM_PROBS: tuple[tuple[int, float], ...] = (
     (12, 1 / 36),
 )
 
+JAIL_BIAS_WEIGHT = 0.25
+
 
 def dice_sum_probs_2d6() -> Iterable[tuple[int, float]]:
     return DICE_SUM_PROBS
+
+
+def _group_cells(state: GameState, group: str | None) -> list[int]:
+    if not group:
+        return []
+    return [idx for idx, cell in enumerate(state.board) if cell.group == group]
+
+
+def _jail_index(state: GameState) -> int | None:
+    for idx, cell in enumerate(state.board):
+        if cell.cell_type == "jail":
+            return idx
+    return None
+
+
+def jail_exit_heat_group(state: GameState, group: str | None) -> float:
+    cells = _group_cells(state, group)
+    if not cells:
+        return 0.0
+    jail_idx = _jail_index(state)
+    if jail_idx is None:
+        return 0.0
+    board_size = len(state.board)
+    total = 0.0
+    for roll, prob in DICE_SUM_PROBS:
+        idx = (jail_idx + roll) % board_size
+        if idx in cells:
+            total += prob
+    return total
+
+
+def landing_prob_group(state: GameState, group: str | None) -> float:
+    cells = _group_cells(state, group)
+    if not cells:
+        return 0.0
+    board_size = len(state.board)
+    base_prob = len(cells) / max(1.0, board_size)
+    jail_bias = jail_exit_heat_group(state, group)
+    return (1.0 - JAIL_BIAS_WEIGHT) * base_prob + JAIL_BIAS_WEIGHT * jail_bias
 
 
 def _owns_group(state: GameState, owner_id: int, group: str | None) -> bool:
