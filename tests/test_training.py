@@ -11,12 +11,19 @@ from monopoly.engine import create_engine
 from monopoly.league import add_to_league
 from monopoly.params import BotParams, ThinkingConfig, decide_build_actions, save_params
 from monopoly.train import (
+    FITNESS_COEFFS,
+    FITNESS_CONFIDENCE,
     LAST_TRAIN_THINKING_USED,
     build_eval_cases,
     build_opponent_pool,
     evaluate_candidates,
     cem_train,
+    fitness_from_components,
     load_league,
+    place_to_score,
+    placements_by_net_worth,
+    win_like_outcome,
+    wilson_interval,
 )
 
 
@@ -97,6 +104,53 @@ def test_eval_determinism() -> None:
     )
     assert results_a[0].fitness == results_b[0].fitness
     _cleanup_tmp(tmp_path)
+
+
+def test_place_to_score_mapping() -> None:
+    assert place_to_score(1) == 1.0
+    assert place_to_score(2) == 0.6
+    assert place_to_score(3) == 0.3
+    assert place_to_score(4) == 0.1
+    assert place_to_score(5) == 0.0
+    assert place_to_score(6) == 0.0
+
+
+def test_cutoff_outcome_uses_net_worth_ranking() -> None:
+    engine = create_engine(num_players=6, seed=1)
+    state = engine.state
+    for idx, player in enumerate(state.players):
+        player.money = 1000 - idx * 100
+    placements = placements_by_net_worth(state)
+    assert placements[0] == 1
+    assert placements[1] == 2
+    top_outcome = win_like_outcome(placements[0], winner=False, ended_by_cutoff=True)
+    second_outcome = win_like_outcome(placements[1], winner=False, ended_by_cutoff=True)
+    assert top_outcome == 1.0
+    assert second_outcome == 0.6
+
+
+def test_wilson_lcb_monotonicity() -> None:
+    low, _ = wilson_interval(1.0, 10, FITNESS_CONFIDENCE)
+    high, _ = wilson_interval(2.0, 10, FITNESS_CONFIDENCE)
+    assert high >= low
+
+
+def test_fitness_priority_win() -> None:
+    fitness_a = fitness_from_components(
+        win_lcb=0.6,
+        place_score=0.0,
+        advantage=-0.5,
+        cutoff_rate=0.0,
+        coefficients=FITNESS_COEFFS,
+    )
+    fitness_b = fitness_from_components(
+        win_lcb=0.5,
+        place_score=0.0,
+        advantage=2.0,
+        cutoff_rate=0.0,
+        coefficients=FITNESS_COEFFS,
+    )
+    assert fitness_a > fitness_b
 
 
 def test_league_rotation() -> None:

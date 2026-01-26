@@ -287,6 +287,30 @@ def test_rebench_runs_on_unknown_hash(tmp_path: Path) -> None:
     assert status.get("league_rebench_done") is True
 
 
+def test_eval_protocol_hash_changes_on_params() -> None:
+    protocol = build_league_rebench_protocol(
+        players=6,
+        games_per_cand=1,
+        max_steps=10,
+        league_cap=16,
+        seed=1,
+        cand_seats="rotate",
+    )
+    base_hash = eval_protocol_hash(protocol)
+    modified = dict(protocol)
+    modified["fitness_confidence"] = 0.9
+    assert eval_protocol_hash(modified) != base_hash
+    modified_steps = dict(protocol)
+    modified_steps["max_steps"] = 20
+    assert eval_protocol_hash(modified_steps) != base_hash
+    modified_coeffs = dict(protocol)
+    modified_coeffs["fitness_coeffs"] = {
+        **protocol.get("fitness_coeffs", {}),
+        "advantage": 2.0,
+    }
+    assert eval_protocol_hash(modified_coeffs) != base_hash
+
+
 def test_autoevolve_thinking_disabled(tmp_path: Path) -> None:
     league_dir = tmp_path / "league"
     league_dir.mkdir()
