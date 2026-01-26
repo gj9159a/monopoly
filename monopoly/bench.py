@@ -1,28 +1,30 @@
 from __future__ import annotations
 
 import argparse
+import math
 import os
 from pathlib import Path
 from statistics import mean
 
 from .params import BotParams, ThinkingConfig, load_params
 from .train import (
+    ADVANTAGE_SCALE,
+    FITNESS_CONFIDENCE,
+    fitness_from_components,
     build_eval_cases,
     build_opponent_pool,
     load_league,
+    place_to_score,
+    placements_by_net_worth,
     play_game,
-    score_player,
+    win_like_outcome,
+    wilson_interval,
     _net_worth,
 )
 
 
-def _win_rate_ci(wins: int, games: int, z: float = 1.96) -> tuple[float, float]:
-    if games <= 0:
-        return 0.0, 1.0
-    p = wins / games
-    variance = p * (1 - p) / games
-    margin = z * (variance ** 0.5)
-    return max(0.0, p - margin), min(1.0, p + margin)
+def _win_rate_ci(wins_eff: float, games: int, confidence: float) -> tuple[float, float]:
+    return wilson_interval(wins_eff, games, confidence)
 
 
 def _mean_ci(sum_value: float, sum_sq: float, n: int, z: float = 1.96) -> tuple[float, float]:
@@ -73,10 +75,12 @@ def bench(
     seeds = load_seed_pack(seeds_file, seed, games)
     cases = build_eval_cases(seeds, num_players, cand_seats, seed)
 
-    wins = 0
-    scores: list[float] = []
+    wins_eff = 0.0
+    place_scores: list[float] = []
+    advantages: list[float] = []
     net_sum = 0.0
     net_sum_sq = 0.0
+    cutoff_count = 0
     steps_list: list[int] = []
     stop_reason = "full"
 
@@ -91,18 +95,30 @@ def bench(
                 params_by_seat.append(candidate)
             else:
                 params_by_seat.append(next(opp_iter))
-        state, first_bankrupt_id, steps = play_game(params_by_seat, num_players, game_seed, max_steps)
-        if state.winner_id == seat:
-            wins += 1
-        scores.append(score_player(state, seat, first_bankrupt_id))
+        state, _, steps = play_game(params_by_seat, num_players, game_seed, max_steps)
+        ended_by_cutoff = not state.game_over
+        placements = placements_by_net_worth(state)
+        placement = placements.get(seat, num_players)
+        success = win_like_outcome(placement, state.winner_id == seat, ended_by_cutoff)
+        wins_eff += success
+        place_scores.append(place_to_score(placement))
         net_worth = _net_worth(state, seat)
+        others = [
+            _net_worth(state, player_id)
+            for player_id in range(num_players)
+            if player_id != seat
+        ]
+        others_mean = sum(others) / len(others) if others else 0.0
+        advantages.append(math.tanh((net_worth - others_mean) / ADVANTAGE_SCALE))
+        if ended_by_cutoff:
+            cutoff_count += 1
         net_sum += net_worth
         net_sum_sq += net_worth * net_worth
         steps_list.append(steps)
-        games_played = len(scores)
+        games_played = len(steps_list)
         min_required = min(min_games, len(cases))
         if games_played >= min_required:
-            ci_low, ci_high = _win_rate_ci(wins, games_played)
+            ci_low, ci_high = _win_rate_ci(wins_eff, games_played, FITNESS_CONFIDENCE)
             if ci_low >= 0.5 + delta:
                 stop_reason = "above"
                 break
@@ -110,16 +126,26 @@ def bench(
                 stop_reason = "below"
                 break
 
-    games_played = len(scores)
-    win_rate = wins / max(1, games_played)
-    ci_low, ci_high = _win_rate_ci(wins, games_played)
+    games_played = len(steps_list)
+    win_rate = wins_eff / max(1, games_played)
+    ci_low, ci_high = _win_rate_ci(wins_eff, games_played, FITNESS_CONFIDENCE)
+    win_lcb = ci_low
+    place_score = mean(place_scores) if place_scores else 0.0
+    advantage = mean(advantages) if advantages else 0.0
+    cutoff_rate = cutoff_count / max(1, games_played)
+    fitness = fitness_from_components(win_lcb, place_score, advantage, cutoff_rate)
     net_ci_low, net_ci_high = _mean_ci(net_sum, net_sum_sq, games_played)
     return {
         "games": float(games_played),
+        "fitness": fitness,
         "win_rate": win_rate,
+        "win_lcb": win_lcb,
         "ci_low": ci_low,
         "ci_high": ci_high,
-        "avg_score": mean(scores) if scores else 0.0,
+        "place_score": place_score,
+        "advantage": advantage,
+        "cutoff_rate": cutoff_rate,
+        "avg_score": win_rate,
         "avg_net_worth": net_sum / games_played if games_played else 0.0,
         "net_worth_ci_low": net_ci_low,
         "net_worth_ci_high": net_ci_high,
@@ -189,9 +215,13 @@ def main(argv: list[str] | None = None) -> None:
 
     games = int(result["games"])
     print(f"Games: {games}")
-    print(f"Win rate: {result['win_rate']:.3f}")
-    print(f"95% CI: [{result['ci_low']:.3f}, {result['ci_high']:.3f}]")
-    print(f"Avg score: {result['avg_score']:.4f}")
+    print(f"Fitness: {result['fitness']:.3f}")
+    print(f"Win-like rate: {result['win_rate']:.3f}")
+    print(f"Win LCB ({int(FITNESS_CONFIDENCE * 100)}%): {result['win_lcb']:.3f}")
+    print(f"CI: [{result['ci_low']:.3f}, {result['ci_high']:.3f}]")
+    print(f"Place score: {result['place_score']:.3f}")
+    print(f"Advantage: {result['advantage']:.3f}")
+    print(f"Cutoff rate: {result['cutoff_rate']:.3f}")
     print(f"Avg net worth: {result['avg_net_worth']:.1f}")
     print(f"Net worth CI: [{result['net_worth_ci_low']:.1f}, {result['net_worth_ci_high']:.1f}]")
     print(f"Avg steps: {result['avg_steps']:.1f}")

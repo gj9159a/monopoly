@@ -4,13 +4,14 @@ import argparse
 import csv
 import hashlib
 import json
+import math
 import random
 import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from multiprocessing import get_context
 from pathlib import Path
-from statistics import mean, pstdev
+from statistics import NormalDist, mean, pstdev
 from typing import Iterable, Sequence
 
 from .engine import create_engine
@@ -31,11 +32,24 @@ from .params import (
 class EvalResult:
     fitness: float
     win_rate: float
+    win_lcb: float
+    place_score: float
+    advantage: float
+    cutoff_rate: float
     avg_net_worth: float
 
 
 LAST_TRAIN_THINKING_USED = False
-SCORING_VERSION = "score_v1"
+SCORING_VERSION = "score_v2"
+FITNESS_CONFIDENCE = 0.80
+ADVANTAGE_SCALE = 1000.0
+PLACE_TO_SCORE = {1: 1.0, 2: 0.60, 3: 0.30, 4: 0.10, 5: 0.0, 6: 0.0}
+FITNESS_COEFFS = {
+    "win_lcb": 1000.0,
+    "place_score": 10.0,
+    "advantage": 1.0,
+    "cutoff_rate": -5.0,
+}
 
 
 def _disable_thinking(params: BotParams) -> BotParams:
@@ -66,6 +80,65 @@ def score_player(state: GameState, player_id: int, first_bankrupt_id: int | None
     if first_bankrupt_id == player_id:
         score -= 0.2
     return score
+
+
+def place_to_score(placement: int) -> float:
+    return float(PLACE_TO_SCORE.get(int(placement), 0.0))
+
+
+def placements_by_net_worth(state: GameState) -> dict[int, int]:
+    worths: list[tuple[int, int]] = []
+    for player in state.players:
+        worths.append((player.player_id, _net_worth(state, player.player_id)))
+    worths.sort(key=lambda item: (-item[1], item[0]))
+    placements: dict[int, int] = {}
+    for idx, (player_id, _) in enumerate(worths, start=1):
+        placements[player_id] = idx
+    return placements
+
+
+def win_like_outcome(placement: int, winner: bool, ended_by_cutoff: bool) -> float:
+    if ended_by_cutoff:
+        return place_to_score(placement)
+    return 1.0 if winner else 0.0
+
+
+def advantage_from_net_worth(net_worth: float, others_mean: float, scale: float = ADVANTAGE_SCALE) -> float:
+    if scale <= 0:
+        return 0.0
+    return math.tanh((net_worth - others_mean) / scale)
+
+
+def wilson_interval(wins_eff: float, n: int, confidence: float = FITNESS_CONFIDENCE) -> tuple[float, float]:
+    if n <= 0:
+        return 0.0, 1.0
+    if confidence <= 0 or confidence >= 1:
+        raise ValueError("confidence должен быть в диапазоне (0,1)")
+    z = NormalDist().inv_cdf(0.5 + confidence / 2.0)
+    phat = wins_eff / n
+    z2 = z * z
+    denom = 1.0 + z2 / n
+    center = phat + z2 / (2.0 * n)
+    margin = z * math.sqrt((phat * (1.0 - phat) + z2 / (4.0 * n)) / n)
+    lower = (center - margin) / denom
+    upper = (center + margin) / denom
+    return max(0.0, lower), min(1.0, upper)
+
+
+def fitness_from_components(
+    win_lcb: float,
+    place_score: float,
+    advantage: float,
+    cutoff_rate: float,
+    coefficients: dict[str, float] | None = None,
+) -> float:
+    coeffs = coefficients or FITNESS_COEFFS
+    return (
+        coeffs["win_lcb"] * win_lcb
+        + coeffs["place_score"] * place_score
+        + coeffs["advantage"] * advantage
+        + coeffs["cutoff_rate"] * cutoff_rate
+    )
 
 
 def _hash_text(payload: str) -> str:
@@ -112,6 +185,11 @@ def _build_eval_protocol(
             "includes_baseline": opponents == "mixed",
         },
         "master_seed": seed,
+        "fitness_confidence": FITNESS_CONFIDENCE,
+        "place_to_score": PLACE_TO_SCORE,
+        "advantage_scale": ADVANTAGE_SCALE,
+        "fitness_coeffs": FITNESS_COEFFS,
+        "cutoff_outcome_policy": "placement_mapping",
         "scoring_version": SCORING_VERSION,
     }
 
@@ -267,7 +345,7 @@ def _eval_case(
         list[BotParams],
         int,
     ],
-) -> tuple[int, float, int, int]:
+) -> tuple[int, float, float, float, float, int]:
     (
         cand_index,
         candidate,
@@ -288,11 +366,22 @@ def _eval_case(
         case_index,
         seed,
     )
-    state, first_bankrupt_id, _ = play_game(params_by_seat, num_players, game_seed, max_steps)
-    score = score_player(state, seat, first_bankrupt_id)
-    win = 1 if state.winner_id == seat else 0
+    state, _, _ = play_game(params_by_seat, num_players, game_seed, max_steps)
+    ended_by_cutoff = not state.game_over
+    placements = placements_by_net_worth(state)
+    placement = placements.get(seat, num_players)
+    success = win_like_outcome(placement, state.winner_id == seat, ended_by_cutoff)
+    place_score_value = place_to_score(placement)
     net_worth = _net_worth(state, seat)
-    return cand_index, score, win, net_worth
+    others = [
+        _net_worth(state, player_id)
+        for player_id in range(num_players)
+        if player_id != seat
+    ]
+    others_mean = sum(others) / len(others) if others else 0.0
+    advantage = advantage_from_net_worth(net_worth, others_mean)
+    cutoff_flag = 1.0 if ended_by_cutoff else 0.0
+    return cand_index, success, place_score_value, advantage, cutoff_flag, net_worth
 
 
 def evaluate_candidates(
@@ -320,6 +409,11 @@ def evaluate_candidates(
         "max_steps": max_steps,
         "cand_seats": cand_seats,
         "seed": seed,
+        "scoring_version": SCORING_VERSION,
+        "fitness_confidence": FITNESS_CONFIDENCE,
+        "advantage_scale": ADVANTAGE_SCALE,
+        "place_to_score": PLACE_TO_SCORE,
+        "fitness_coeffs": FITNESS_COEFFS,
     }
     seeds_hash = _hash_seeds(seeds)
     opponents_hash = _hash_params_list(sanitized_opponents)
@@ -374,12 +468,21 @@ def evaluate_candidates(
             raw_results = [_eval_case(task) for task in tasks]
 
         sums: dict[int, dict[str, float]] = {
-            cand_index: {"score": 0.0, "wins": 0.0, "net": 0.0, "count": 0.0}
+            cand_index: {
+                "wins_eff": 0.0,
+                "place_score": 0.0,
+                "advantage": 0.0,
+                "cutoff": 0.0,
+                "net": 0.0,
+                "count": 0.0,
+            }
             for cand_index in keys
         }
-        for cand_index, score, win, net_worth in raw_results:
-            sums[cand_index]["score"] += score
-            sums[cand_index]["wins"] += win
+        for cand_index, success, place_score_value, advantage, cutoff_flag, net_worth in raw_results:
+            sums[cand_index]["wins_eff"] += success
+            sums[cand_index]["place_score"] += place_score_value
+            sums[cand_index]["advantage"] += advantage
+            sums[cand_index]["cutoff"] += cutoff_flag
             sums[cand_index]["net"] += net_worth
             sums[cand_index]["count"] += 1
 
@@ -387,10 +490,23 @@ def evaluate_candidates(
             count = int(sums[cand_index]["count"])
             if count == 0:
                 raise RuntimeError("Пустая оценка кандидата")
-            fitness = sums[cand_index]["score"] / count
-            win_rate = sums[cand_index]["wins"] / count
+            wins_eff = sums[cand_index]["wins_eff"]
+            win_hat = wins_eff / count
+            win_lcb, _ = wilson_interval(wins_eff, count, FITNESS_CONFIDENCE)
+            place_score_value = sums[cand_index]["place_score"] / count
+            advantage_value = sums[cand_index]["advantage"] / count
+            cutoff_rate = sums[cand_index]["cutoff"] / count
+            fitness = fitness_from_components(win_lcb, place_score_value, advantage_value, cutoff_rate)
             avg_net = sums[cand_index]["net"] / count
-            result = EvalResult(fitness=fitness, win_rate=win_rate, avg_net_worth=avg_net)
+            result = EvalResult(
+                fitness=fitness,
+                win_rate=win_hat,
+                win_lcb=win_lcb,
+                place_score=place_score_value,
+                advantage=advantage_value,
+                cutoff_rate=cutoff_rate,
+                avg_net_worth=avg_net,
+            )
             results[cand_index] = result
             cache[key] = result
             if cache_path is not None:
@@ -400,6 +516,10 @@ def evaluate_candidates(
                         "key": key,
                         "fitness": result.fitness,
                         "win_rate": result.win_rate,
+                        "win_lcb": result.win_lcb,
+                        "place_score": result.place_score,
+                        "advantage": result.advantage,
+                        "cutoff_rate": result.cutoff_rate,
                         "avg_net_worth": result.avg_net_worth,
                     }
                     handle.write(json.dumps(payload, sort_keys=True))
@@ -610,8 +730,7 @@ def main(argv: list[str] | None = None) -> None:
         cand_seats=args.cand_seats,
         seed=args.seed,
     )
-    wins = 0
-    scores: list[float] = []
+    wins_eff = 0.0
     net_worths: list[int] = []
     for idx, (game_seed, seat) in enumerate(quick_cases):
         params_by_seat = _build_params_by_seat(
@@ -623,12 +742,12 @@ def main(argv: list[str] | None = None) -> None:
             idx,
             args.seed,
         )
-        state, first_bankrupt_id, _ = play_game(params_by_seat, args.players, game_seed, args.max_steps)
-        if state.winner_id == seat:
-            wins += 1
-        scores.append(score_player(state, seat, first_bankrupt_id))
+        state, _, _ = play_game(params_by_seat, args.players, game_seed, args.max_steps)
+        ended_by_cutoff = not state.game_over
+        placement = placements_by_net_worth(state).get(seat, args.players)
+        wins_eff += win_like_outcome(placement, state.winner_id == seat, ended_by_cutoff)
         net_worths.append(_net_worth(state, seat))
-    win_rate = wins / max(1, len(quick_cases))
+    win_rate = wins_eff / max(1, len(quick_cases))
     avg_net = mean(net_worths) if net_worths else 0.0
     print(f"Quick bench vs baseline (20 игр): win_rate={win_rate:.3f}, avg_net_worth={avg_net:.1f}")
 

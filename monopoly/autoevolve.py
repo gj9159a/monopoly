@@ -16,7 +16,7 @@ from .bench import bench
 from .io_utils import read_json, write_json_atomic
 from .league import add_to_league, hash_params, load_index, resolve_entry_path, save_index
 from .params import BotParams, ThinkingConfig, load_params
-from .train import SCORING_VERSION
+from .train import ADVANTAGE_SCALE, FITNESS_CONFIDENCE, FITNESS_COEFFS, PLACE_TO_SCORE, SCORING_VERSION
 
 DEFAULT_TOP_K_POOL = 8
 DEFAULT_LEAGUE_CAP = 16
@@ -66,6 +66,11 @@ def build_eval_protocol(
         "seat_rotation_policy": seat_rotation_policy,
         "eval_seeds_policy": eval_seeds_policy,
         "opponent_sampling_policy": opponent_sampling_policy,
+        "fitness_confidence": FITNESS_CONFIDENCE,
+        "place_to_score": PLACE_TO_SCORE,
+        "advantage_scale": ADVANTAGE_SCALE,
+        "fitness_coeffs": FITNESS_COEFFS,
+        "cutoff_outcome_policy": "placement_mapping",
         "scoring_version": scoring_version,
     }
 
@@ -348,16 +353,24 @@ def _rebench_league(
                 seeds_file=None,
                 opponents_pool=pool,
             )
-            fitness = float(result["avg_score"])
+            fitness = float(result["fitness"])
             win_rate = float(result["win_rate"])
             ci_low = float(result["ci_low"])
             ci_high = float(result["ci_high"])
+            win_lcb = float(result.get("win_lcb", ci_low))
+            place_score = float(result.get("place_score", 0.0))
+            advantage = float(result.get("advantage", 0.0))
+            cutoff_rate = float(result.get("cutoff_rate", 0.0))
             entry.update(
                 {
                     "fitness": fitness,
                     "win_rate": win_rate,
                     "win_rate_ci_low": ci_low,
                     "win_rate_ci_high": ci_high,
+                    "win_lcb": win_lcb,
+                    "place_score": place_score,
+                    "advantage": advantage,
+                    "cutoff_rate": cutoff_rate,
                     "bench_timestamp": _utc_now(),
                     "eval_protocol_hash": eval_protocol_hash_value,
                     "eval_protocol": eval_protocol,
@@ -765,6 +778,10 @@ def run_autoevolve(
         best_win_rate = _coerce_fitness(cycle_status.get("best_winrate_mean"))
         best_ci_low = _coerce_fitness(cycle_status.get("best_winrate_ci_low"))
         best_ci_high = _coerce_fitness(cycle_status.get("best_winrate_ci_high"))
+        best_win_lcb = _coerce_fitness(cycle_status.get("best_win_lcb"))
+        best_place_score = _coerce_fitness(cycle_status.get("best_place_score"))
+        best_advantage = _coerce_fitness(cycle_status.get("best_advantage"))
+        best_cutoff_rate = _coerce_fitness(cycle_status.get("best_cutoff_rate"))
         opponents_source = "baseline" if bootstrap else "league_snapshot"
         entry_eval_protocol = _build_training_eval_protocol(
             players=6,
@@ -791,6 +808,14 @@ def run_autoevolve(
             entry_fields["win_rate_ci_low"] = float(best_ci_low)
         if best_ci_high is not None:
             entry_fields["win_rate_ci_high"] = float(best_ci_high)
+        if best_win_lcb is not None:
+            entry_fields["win_lcb"] = float(best_win_lcb)
+        if best_place_score is not None:
+            entry_fields["place_score"] = float(best_place_score)
+        if best_advantage is not None:
+            entry_fields["advantage"] = float(best_advantage)
+        if best_cutoff_rate is not None:
+            entry_fields["cutoff_rate"] = float(best_cutoff_rate)
         status["candidates_produced"] = int(status.get("candidates_produced", 0) or 0) + 1
         status["candidates_evaluated"] = int(status.get("candidates_evaluated", 0) or 0) + 1
 

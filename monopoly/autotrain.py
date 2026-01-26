@@ -248,6 +248,10 @@ def run_autotrain(
                     "best_winrate_mean",
                     "best_winrate_ci_low",
                     "best_winrate_ci_high",
+                    "best_win_lcb",
+                    "best_place_score",
+                    "best_advantage",
+                    "best_cutoff_rate",
                     "plateau_counter",
                     "promoted_count",
                     "cache_hits",
@@ -355,6 +359,10 @@ def run_autotrain(
             best_winrate = float(bench_result["win_rate"])
             best_ci_low = float(bench_result["ci_low"])
             best_ci_high = float(bench_result["ci_high"])
+            best_win_lcb = float(bench_result.get("win_lcb", best_ci_low))
+            best_place_score = float(bench_result.get("place_score", 0.0))
+            best_advantage = float(bench_result.get("advantage", 0.0))
+            best_cutoff_rate = float(bench_result.get("cutoff_rate", 0.0))
 
             if best_fitness > prev_best_fitness + eps_fitness:
                 promoted_count += 1
@@ -377,6 +385,10 @@ def run_autotrain(
                     "best_winrate_mean": best_winrate,
                     "best_winrate_ci_low": best_ci_low,
                     "best_winrate_ci_high": best_ci_high,
+                    "best_win_lcb": best_win_lcb,
+                    "best_place_score": best_place_score,
+                    "best_advantage": best_advantage,
+                    "best_cutoff_rate": best_cutoff_rate,
                     "promoted_count": promoted_count,
                     "last_promoted_epoch": last_promoted_epoch,
                     "plateau_counter": plateau_counter,
@@ -406,6 +418,10 @@ def run_autotrain(
                     f"{best_winrate:.6f}",
                     f"{best_ci_low:.6f}",
                     f"{best_ci_high:.6f}",
+                    f"{best_win_lcb:.6f}",
+                    f"{best_place_score:.6f}",
+                    f"{best_advantage:.6f}",
+                    f"{best_cutoff_rate:.6f}",
                     plateau_counter,
                     promoted_count,
                     cache_hits_epoch,
@@ -418,8 +434,8 @@ def run_autotrain(
                 progress_path,
                 (
                     f"epoch {epoch:03d} | best_fitness {best_fitness:.4f} | "
-                    f"win_rate {best_winrate:.3f} [{best_ci_low:.3f},{best_ci_high:.3f}] | "
-                    f"plateau {plateau_counter}/{plateau_epochs}"
+                    f"win_hat {best_winrate:.3f} lcb {best_win_lcb:.3f} | "
+                    f"cutoff {best_cutoff_rate:.3f} | plateau {plateau_counter}/{plateau_epochs}"
                 ),
             )
 
