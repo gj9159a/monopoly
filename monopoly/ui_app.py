@@ -993,6 +993,8 @@ def _start_autoevolve(
     max_new_bests: int,
     meta_plateau_cycles: int,
     bootstrap_min_league_for_pool: int,
+    league_rebench_on_mismatch: bool,
+    league_rebench_games: int,
     league_dir: str,
     baseline_path: str,
     runs_dir: Path | None = None,
@@ -1040,6 +1042,10 @@ def _start_autoevolve(
         str(meta_plateau_cycles),
         "--bootstrap-min-league-for-pool",
         str(bootstrap_min_league_for_pool),
+        "--league-rebench-on-mismatch",
+        str(league_rebench_on_mismatch).lower(),
+        "--league-rebench-games",
+        str(league_rebench_games),
         "--league-dir",
         league_dir,
         "--baseline",
@@ -1330,6 +1336,10 @@ def render_training_mode() -> None:
             value=4,
             step=1,
         )
+        league_rebench_on_mismatch = st.checkbox(
+            "Re-benchmark при несовпадении протокола fitness",
+            value=True,
+        )
         league_dir = st.text_input(
             "League dir",
             value=str(ROOT_DIR / "monopoly" / "data" / "league"),
@@ -1345,6 +1355,13 @@ def render_training_mode() -> None:
             population = st.number_input("Population", min_value=4, value=48, step=2)
             elite = st.number_input("Elite", min_value=1, value=12, step=1)
             games_per_cand = st.number_input("Games per candidate", min_value=1, value=20, step=1)
+            league_rebench_games = st.number_input(
+                "Games for re-benchmark",
+                min_value=1,
+                value=int(games_per_cand),
+                step=1,
+                disabled=not league_rebench_on_mismatch,
+            )
             max_steps = st.number_input("Max steps", min_value=100, value=2000, step=100)
             epoch_iters = st.number_input("Epoch iters", min_value=1, value=10, step=1)
             plateau_epochs = st.number_input("Plateau epochs", min_value=1, value=10, step=1)
@@ -1402,6 +1419,8 @@ def render_training_mode() -> None:
                 max_new_bests=int(max_new_bests),
                 meta_plateau_cycles=int(meta_plateau_cycles),
                 bootstrap_min_league_for_pool=int(bootstrap_min_league_for_pool),
+                league_rebench_on_mismatch=bool(league_rebench_on_mismatch),
+                league_rebench_games=int(league_rebench_games),
                 league_dir=league_dir,
                 baseline_path=baseline_path,
             )
@@ -1431,6 +1450,8 @@ def render_training_mode() -> None:
                 max_new_bests=int(max_new_bests),
                 meta_plateau_cycles=int(meta_plateau_cycles),
                 bootstrap_min_league_for_pool=int(bootstrap_min_league_for_pool),
+                league_rebench_on_mismatch=bool(league_rebench_on_mismatch),
+                league_rebench_games=int(league_rebench_games),
                 league_dir=league_dir,
                 baseline_path=baseline_path,
                 runs_dir=Path(runs_dir_raw),
@@ -1490,6 +1511,12 @@ def render_training_mode() -> None:
         col6.metric("Pool size", pool_size)
         col7.metric("Top-K pool", int(meta_status.get("top_k_pool", 0) or 0))
         col8.metric("League cap", int(meta_status.get("league_cap", 0) or 0))
+
+        rebench_needed = bool(meta_status.get("league_rebench_needed", False))
+        rebench_done = bool(meta_status.get("league_rebench_done", False))
+        col_rb1, col_rb2 = st.columns(2)
+        col_rb1.metric("Re-benchmark needed", "Да" if rebench_needed else "Нет")
+        col_rb2.metric("Re-benchmark done", "Да" if rebench_done else "Нет")
 
         if cycle_status:
             col9, col10, col11, col12 = st.columns(4)
