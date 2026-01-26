@@ -121,6 +121,64 @@ def test_autoevolve_stop_meta_plateau(tmp_path: Path) -> None:
     assert status.get("new_bests_count") == 1
 
 
+def test_bootstrap_league_grows_to_min_pool(tmp_path: Path) -> None:
+    league_dir = tmp_path / "league"
+    league_dir.mkdir()
+    baseline_path = tmp_path / "baseline.json"
+    _write_params(baseline_path, BotParams())
+
+    runs_dir = tmp_path / "runs"
+    _run_autoevolve(
+        runs_dir,
+        league_dir,
+        baseline_path,
+        max_new_bests=6,
+        meta_plateau_cycles=10,
+        bootstrap_min_league_for_pool=3,
+        population=1,
+        elite=1,
+        games_per_cand=1,
+        epoch_iters=1,
+        plateau_epochs=1,
+        min_progress_games=1,
+        max_steps=10,
+    )
+
+    index = load_index(league_dir)
+    assert len(index["items"]) >= 3
+
+
+def test_bootstrap_add_allows_non_top1(tmp_path: Path) -> None:
+    league_dir = tmp_path / "league"
+    league_dir.mkdir()
+    baseline_path = tmp_path / "baseline.json"
+    _write_params(baseline_path, BotParams())
+
+    add_to_league(BotParams(cash_buffer_base=999), 1e9, {"name": "top"}, league_dir)
+    index_before = load_index(league_dir)
+    top1_hash = index_before["items"][0]["hash"]
+
+    runs_dir = tmp_path / "runs"
+    _run_autoevolve(
+        runs_dir,
+        league_dir,
+        baseline_path,
+        max_new_bests=1,
+        bootstrap_min_league_for_pool=4,
+        population=1,
+        elite=1,
+        games_per_cand=1,
+        epoch_iters=1,
+        plateau_epochs=1,
+        min_progress_games=1,
+        max_steps=10,
+    )
+
+    index_after = load_index(league_dir)
+    assert len(index_after["items"]) == 2
+    assert index_after["items"][0]["hash"] == top1_hash
+
+
 def test_autoevolve_thinking_disabled(tmp_path: Path) -> None:
     league_dir = tmp_path / "league"
     league_dir.mkdir()

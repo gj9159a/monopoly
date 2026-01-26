@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from monopoly.league import add_to_league, get_top1, load_index, sample_from_league
+from monopoly.league import add_to_league, get_top1, hash_params, load_index, sample_from_league
 from monopoly.params import BotParams
 
 
@@ -57,3 +57,9 @@ def test_sample_unique_excluding_top1(tmp_path: Path) -> None:
     assert len(sample) == 5
     assert len(hashes) == len(set(hashes))
     assert not exclude.intersection(hashes)
+
+
+def test_hash_not_collapsing_on_small_param_change() -> None:
+    base = BotParams(max_bid_fraction=0.7)
+    changed = BotParams(max_bid_fraction=0.701)
+    assert hash_params(base) != hash_params(changed)
