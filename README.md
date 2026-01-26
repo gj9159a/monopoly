@@ -147,6 +147,16 @@ python -m monopoly.progress --league-dir monopoly/data/league --baseline monopol
 1) auto-evolve (meta-циклы)
 2) progress (200 игр) — сравнить с baseline и лигой
 
+### Как считается fitness
+
+- Для каждой игры считается `win_like_outcome`:
+  - если игра завершилась естественно (банкротства): 1.0 за победу, иначе 0.0;
+  - если игра остановлена по `max_steps`: используется место по net worth (1→1.00, 2→0.60, 3→0.30, 4→0.10, 5–6→0.00).
+- `win_lcb` — нижняя граница Wilson CI для `win_like_outcome` (confidence=0.80).
+- Дополнительно считаются `place_score`, `advantage = tanh((net_worth - mean_others)/scale)` и `cutoff_rate`.
+- Итоговая формула:
+  `fitness = 1000 * win_lcb + 10 * place_score + 1 * advantage - 5 * cutoff_rate`.
+
 ## Данные локализации и правил
 
 Файлы для редактирования:
@@ -160,7 +170,6 @@ python -m monopoly.progress --league-dir monopoly/data/league --baseline monopol
 - `monopoly/data/params_baseline.json` — baseline параметры бота.
 - `monopoly/data/league/index.json` — индекс лиги (TOP-16 по fitness, ранги 1..N).
 - `monopoly/data/league/*.json` — параметры ботов из index.json.
-- `monopoly/data/league/last_best.json`, `top_k.json` — legacy/экспорт, не используются в логике.
 - `monopoly/data/seeds.txt` — фиксированный набор сидов для бенчмарка/прогресса.
 
 ## Реализованные правила
