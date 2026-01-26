@@ -220,25 +220,6 @@ def group_heat_vs_base(state: GameState, group: str | None) -> float:
     return heatmap.group.get(group, 0.0) - heatmap.group_base.get(group, 0.0)
 
 
-def landing_heat_self(state: GameState, player_id: int) -> float:
-    if player_id < 0 or player_id >= len(state.players):
-        return 0.0
-    return cell_heat(state, state.players[player_id].position)
-
-
-def landing_heat_threat_others(state: GameState, player_id: int) -> float:
-    opponent_positions = [
-        player.position
-        for player in state.players
-        if player.player_id != player_id and not player.bankrupt
-    ]
-    if not opponent_positions:
-        return 0.0
-    heatmap = heatmap_for_state(state)
-    total = sum(heatmap.cell[pos] for pos in opponent_positions)
-    return total / max(1, len(opponent_positions))
-
-
 def _owns_group(state: GameState, owner_id: int, group: str | None) -> bool:
     if not group:
         return False
