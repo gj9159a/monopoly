@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import argparse
+import csv
+import hashlib
+import json
 import math
 import random
 from dataclasses import dataclass
@@ -9,9 +12,11 @@ from pathlib import Path
 from typing import Any
 
 from .autotrain import run_autotrain
+from .bench import bench
 from .io_utils import read_json, write_json_atomic
-from .league import add_to_league, hash_params, load_index, resolve_entry_path
+from .league import add_to_league, hash_params, load_index, resolve_entry_path, save_index
 from .params import BotParams, ThinkingConfig, load_params
+from .train import SCORING_VERSION
 
 DEFAULT_TOP_K_POOL = 8
 DEFAULT_LEAGUE_CAP = 16
@@ -21,6 +26,7 @@ DEFAULT_BOOTSTRAP_MIN = 4
 DEFAULT_EPS_IMPROVEMENT = 1e-4
 CYCLE_SEED_STEP = 10007
 POOL_SNAPSHOT_STEP = 9973
+REBENCH_LOG_FILE = "rebench_log.csv"
 
 STATUS_FILE = "status.json"
 
@@ -30,6 +36,128 @@ class TopKStats:
     hashes: set[str]
     top1_fitness: float
     mean_fitness: float
+
+
+def _hash_payload(payload: dict[str, Any]) -> str:
+    serialized = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+    return hashlib.sha256(serialized.encode("utf-8")).hexdigest()
+
+
+def eval_protocol_hash(protocol: dict[str, Any]) -> str:
+    return _hash_payload(protocol)
+
+
+def build_eval_protocol(
+    *,
+    protocol_kind: str,
+    players: int,
+    games_per_cand: int,
+    max_steps: int,
+    seat_rotation_policy: dict[str, Any],
+    eval_seeds_policy: dict[str, Any],
+    opponent_sampling_policy: dict[str, Any],
+    scoring_version: str,
+) -> dict[str, Any]:
+    return {
+        "protocol_kind": protocol_kind,
+        "players": players,
+        "games_per_cand": games_per_cand,
+        "max_steps": max_steps,
+        "seat_rotation_policy": seat_rotation_policy,
+        "eval_seeds_policy": eval_seeds_policy,
+        "opponent_sampling_policy": opponent_sampling_policy,
+        "scoring_version": scoring_version,
+    }
+
+
+def build_league_rebench_protocol(
+    *,
+    players: int,
+    games_per_cand: int,
+    max_steps: int,
+    league_cap: int,
+    seed: int,
+    cand_seats: str,
+) -> dict[str, Any]:
+    return build_eval_protocol(
+        protocol_kind="league_rebench",
+        players=players,
+        games_per_cand=games_per_cand,
+        max_steps=max_steps,
+        seat_rotation_policy={
+            "mode": cand_seats,
+            "start": "seed % players",
+            "seed_source": "league_rebench_seed",
+        },
+        eval_seeds_policy={"mode": "seed + idx", "seed_source": "league_rebench_seed"},
+        opponent_sampling_policy={
+            "source": "league_topk_selfplay",
+            "pool_size": league_cap,
+            "pool_size_effective": "min(league_cap, league_size)",
+            "exclude_self": True,
+            "pool_fixed": True,
+            "fallback_if_empty": "baseline",
+        },
+        scoring_version=SCORING_VERSION,
+    ) | {"league_rebench_seed": seed}
+
+
+def _build_training_eval_protocol(
+    *,
+    players: int,
+    games_per_cand: int,
+    max_steps: int,
+    cand_seats: str,
+    master_seed: int,
+    opponents_source: str,
+    top_k_pool: int,
+    league_cap: int,
+    pool_snapshot_step: int,
+) -> dict[str, Any]:
+    opponent_policy: dict[str, Any] = {
+        "source": opponents_source,
+        "pool_fixed_per_cycle": True,
+    }
+    if opponents_source == "league_snapshot":
+        opponent_policy.update(
+            {
+                "top_k_pool": top_k_pool,
+                "league_cap": league_cap,
+                "pool_snapshot_seed_policy": f"master_seed + cycle_index*{pool_snapshot_step}",
+            }
+        )
+    return build_eval_protocol(
+        protocol_kind="training_eval",
+        players=players,
+        games_per_cand=games_per_cand,
+        max_steps=max_steps,
+        seat_rotation_policy={
+            "mode": cand_seats,
+            "start": "cycle_seed % players",
+            "seed_source": "cycle_seed",
+        },
+        eval_seeds_policy={
+            "mode": "cycle_seed + idx",
+            "cycle_seed_policy": f"master_seed + cycle_index*{CYCLE_SEED_STEP}",
+        },
+        opponent_sampling_policy=opponent_policy,
+        scoring_version=SCORING_VERSION,
+    ) | {"master_seed": master_seed}
+
+
+def _extract_eval_protocol_hash(entry: dict[str, Any]) -> str:
+    value = entry.get("eval_protocol_hash")
+    if isinstance(value, str) and value:
+        return value
+    return "unknown"
+
+
+def _collect_eval_protocol_hashes(items: list[dict[str, Any]]) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for entry in items:
+        value = _extract_eval_protocol_hash(entry)
+        counts[value] = counts.get(value, 0) + 1
+    return counts
 
 
 def _utc_now() -> str:
@@ -148,6 +276,112 @@ def _write_dedup_example(
     write_json_atomic(cycle_dir / "dedup_example.json", payload)
 
 
+def _rebench_league(
+    league_dir: Path,
+    baseline_path: Path,
+    runs_dir: Path,
+    eval_protocol: dict[str, Any],
+    eval_protocol_hash_value: str,
+    league_cap: int,
+    games: int,
+    max_steps: int,
+    seed: int,
+    cand_seats: str,
+    players: int,
+) -> dict[str, Any]:
+    index = load_index(league_dir)
+    items = index.get("items", [])[:league_cap]
+    if not items:
+        return index
+
+    baseline = load_params(baseline_path).with_thinking(ThinkingConfig())
+
+    entries: list[tuple[dict[str, Any], BotParams]] = []
+    for entry in items:
+        path = resolve_entry_path(entry, league_dir)
+        if not path.exists():
+            continue
+        try:
+            params = load_params(path).with_thinking(ThinkingConfig())
+        except Exception:
+            continue
+        params_hash = hash_params(params)
+        entry["hash"] = params_hash
+        entry["params_hash"] = params_hash
+        entries.append((entry, params))
+
+    log_path = runs_dir / REBENCH_LOG_FILE
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    with log_path.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.writer(handle)
+        writer.writerow(
+            [
+                "name",
+                "hash",
+                "games",
+                "fitness",
+                "win_rate",
+                "ci_low",
+                "ci_high",
+                "eval_protocol_hash",
+                "pool_fallback",
+            ]
+        )
+        for entry, params in entries:
+            pool = [other_params for other_entry, other_params in entries if other_entry is not entry]
+            pool_fallback = False
+            if not pool:
+                pool = [baseline]
+                pool_fallback = True
+            result = bench(
+                candidate=params,
+                baseline=baseline,
+                league_dir=league_dir,
+                opponents="league",
+                num_players=players,
+                games=games,
+                seed=seed,
+                max_steps=max_steps,
+                cand_seats=cand_seats,
+                min_games=games,
+                delta=0.0,
+                seeds_file=None,
+                opponents_pool=pool,
+            )
+            fitness = float(result["avg_score"])
+            win_rate = float(result["win_rate"])
+            ci_low = float(result["ci_low"])
+            ci_high = float(result["ci_high"])
+            entry.update(
+                {
+                    "fitness": fitness,
+                    "win_rate": win_rate,
+                    "win_rate_ci_low": ci_low,
+                    "win_rate_ci_high": ci_high,
+                    "bench_timestamp": _utc_now(),
+                    "eval_protocol_hash": eval_protocol_hash_value,
+                    "eval_protocol": eval_protocol,
+                }
+            )
+            writer.writerow(
+                [
+                    entry.get("name"),
+                    entry.get("hash"),
+                    games,
+                    f"{fitness:.6f}",
+                    f"{win_rate:.6f}",
+                    f"{ci_low:.6f}",
+                    f"{ci_high:.6f}",
+                    eval_protocol_hash_value,
+                    int(pool_fallback),
+                ]
+            )
+
+    updated = {"version": index.get("version", 1), "top_k": index.get("top_k", league_cap), "items": [e for e, _ in entries]}
+    save_index(updated, league_dir)
+    return load_index(league_dir)
+
+
 def _ensure_status_defaults(status: dict[str, Any], runs_dir: Path) -> dict[str, Any]:
     status.setdefault("current_phase", "training")
     status.setdefault("started_at", _utc_now())
@@ -161,6 +395,13 @@ def _ensure_status_defaults(status: dict[str, Any], runs_dir: Path) -> dict[str,
     status.setdefault("pool_snapshot", [])
     status.setdefault("bootstrap", False)
     status.setdefault("league_size", 0)
+    status.setdefault("league_rebench_needed", False)
+    status.setdefault("league_rebench_done", False)
+    status.setdefault("league_eval_protocol_hash", "")
+    status.setdefault("league_rebench_on_mismatch", True)
+    status.setdefault("league_rebench_games", 0)
+    status.setdefault("league_rebench_max_steps", 0)
+    status.setdefault("league_rebench_seed", 0)
     status.setdefault("candidates_produced", 0)
     status.setdefault("candidates_evaluated", 0)
     status.setdefault("candidates_eligible_for_league", 0)
@@ -185,6 +426,17 @@ def _bench_seed_source() -> str:
     if default_seeds.exists():
         return str(default_seeds)
     return "seed+idx"
+
+
+def _parse_bool(value: str | None) -> bool:
+    if value is None:
+        return False
+    normalized = value.strip().lower()
+    if normalized in {"1", "true", "yes", "y", "on"}:
+        return True
+    if normalized in {"0", "false", "no", "n", "off"}:
+        return False
+    raise ValueError(f"Некорректное значение bool: {value}")
 
 
 def _derived_seed_policy(bench_seed_source: str) -> dict[str, str]:
@@ -248,6 +500,10 @@ def run_autoevolve(
     max_new_bests: int,
     meta_plateau_cycles: int,
     bootstrap_min_league_for_pool: int,
+    league_rebench_on_mismatch: bool,
+    league_rebench_games: int | None,
+    league_rebench_max_steps: int | None,
+    league_rebench_seed: int | None,
     population: int,
     elite: int,
     games_per_cand: int,
@@ -281,6 +537,10 @@ def run_autoevolve(
             "max_new_bests": int(max_new_bests),
             "meta_plateau_cycles": int(meta_plateau_cycles),
             "bootstrap_min_league_for_pool": int(bootstrap_min_league_for_pool),
+            "league_rebench_on_mismatch": bool(league_rebench_on_mismatch),
+            "league_rebench_games": int(league_rebench_games or 0),
+            "league_rebench_max_steps": int(league_rebench_max_steps or 0),
+            "league_rebench_seed": int(league_rebench_seed) if league_rebench_seed is not None else int(seed),
             "seed": int(seed),
             "population": int(population),
             "elite": int(elite),
@@ -306,6 +566,64 @@ def run_autoevolve(
         "opponents_rng=cycle_seed+game_seed*1013+seat*917+case_index*37; "
         f"pool_snapshot_rng=master+cycle_index*9973; bench_seeds={bench_seed_source}"
     )
+
+    rebench_games = int(league_rebench_games) if league_rebench_games else int(games_per_cand)
+    rebench_max_steps = int(league_rebench_max_steps) if league_rebench_max_steps else int(max_steps)
+    rebench_seed = int(league_rebench_seed) if league_rebench_seed is not None else int(seed)
+
+    league_eval_protocol = build_league_rebench_protocol(
+        players=6,
+        games_per_cand=rebench_games,
+        max_steps=rebench_max_steps,
+        league_cap=int(league_cap),
+        seed=rebench_seed,
+        cand_seats="rotate",
+    )
+    league_eval_hash = eval_protocol_hash(league_eval_protocol)
+    league_index = load_index(league_dir)
+    league_items = league_index.get("items", [])[: int(league_cap)]
+    hash_counts = _collect_eval_protocol_hashes(league_items)
+    mismatched = sum(count for key, count in hash_counts.items() if key != league_eval_hash)
+    rebench_needed = bool(league_items) and mismatched > 0
+
+    status.update(
+        {
+            "league_eval_protocol_hash": league_eval_hash,
+            "league_rebench_needed": bool(rebench_needed),
+            "league_rebench_done": False,
+            "league_rebench_on_mismatch": bool(league_rebench_on_mismatch),
+            "league_rebench_games": rebench_games,
+            "league_rebench_max_steps": rebench_max_steps,
+            "league_rebench_seed": rebench_seed,
+        }
+    )
+    _write_status(status_path, status)
+    print(
+        f"league eval protocol hash={league_eval_hash} hashes={hash_counts} "
+        f"mismatched={mismatched} rebench_on_mismatch={bool(league_rebench_on_mismatch)}"
+    )
+
+    if league_rebench_on_mismatch and rebench_needed and not resume:
+        league_index = _rebench_league(
+            league_dir=league_dir,
+            baseline_path=baseline_path,
+            runs_dir=runs_dir,
+            eval_protocol=league_eval_protocol,
+            eval_protocol_hash_value=league_eval_hash,
+            league_cap=int(league_cap),
+            games=rebench_games,
+            max_steps=rebench_max_steps,
+            seed=rebench_seed,
+            cand_seats="rotate",
+            players=6,
+        )
+        status.update(
+            {
+                "league_rebench_done": True,
+                "league_size": len(league_index.get("items", [])),
+            }
+        )
+        _write_status(status_path, status)
 
     current_cycle = int(status.get("current_cycle", 0))
     new_bests_count = int(status.get("new_bests_count", 0))
@@ -444,6 +762,35 @@ def run_autoevolve(
             "name": f"best_{timestamp}_c{cycle_index:03d}",
             "note": f"cycle={cycle_index}; best_fitness={best_fitness:.6f}",
         }
+        best_win_rate = _coerce_fitness(cycle_status.get("best_winrate_mean"))
+        best_ci_low = _coerce_fitness(cycle_status.get("best_winrate_ci_low"))
+        best_ci_high = _coerce_fitness(cycle_status.get("best_winrate_ci_high"))
+        opponents_source = "baseline" if bootstrap else "league_snapshot"
+        entry_eval_protocol = _build_training_eval_protocol(
+            players=6,
+            games_per_cand=int(games_per_cand),
+            max_steps=int(max_steps),
+            cand_seats="rotate",
+            master_seed=int(seed),
+            opponents_source=opponents_source,
+            top_k_pool=int(top_k_pool),
+            league_cap=int(league_cap),
+            pool_snapshot_step=POOL_SNAPSHOT_STEP,
+        )
+        entry_eval_hash = eval_protocol_hash(entry_eval_protocol)
+        entry_fields: dict[str, Any] = {
+            "eval_protocol_hash": entry_eval_hash,
+            "eval_protocol": entry_eval_protocol,
+            "bench_timestamp": _utc_now(),
+            "source_run_id": runs_dir.name,
+            "source_cycle": cycle_index,
+        }
+        if best_win_rate is not None:
+            entry_fields["win_rate"] = float(best_win_rate)
+        if best_ci_low is not None:
+            entry_fields["win_rate_ci_low"] = float(best_ci_low)
+        if best_ci_high is not None:
+            entry_fields["win_rate_ci_high"] = float(best_ci_high)
         status["candidates_produced"] = int(status.get("candidates_produced", 0) or 0) + 1
         status["candidates_evaluated"] = int(status.get("candidates_evaluated", 0) or 0) + 1
 
@@ -474,6 +821,7 @@ def run_autoevolve(
                 meta=meta,
                 league_dir=league_dir,
                 top_k=league_cap,
+                entry_fields=entry_fields,
             )
             if added and rank is not None:
                 status["candidates_added_to_league"] = int(
@@ -545,6 +893,10 @@ def build_parser() -> argparse.ArgumentParser:
     run_parser.add_argument("--max-new-bests", type=int, default=DEFAULT_MAX_NEW_BESTS)
     run_parser.add_argument("--meta-plateau-cycles", type=int, default=DEFAULT_META_PLATEAU_CYCLES)
     run_parser.add_argument("--bootstrap-min-league-for-pool", type=int, default=DEFAULT_BOOTSTRAP_MIN)
+    run_parser.add_argument("--league-rebench-on-mismatch", type=_parse_bool, default=True)
+    run_parser.add_argument("--league-rebench-games", type=int, default=None)
+    run_parser.add_argument("--league-rebench-max-steps", type=int, default=None)
+    run_parser.add_argument("--league-rebench-seed", type=int, default=None)
     run_parser.add_argument("--population", type=int, default=48)
     run_parser.add_argument("--elite", type=int, default=12)
     run_parser.add_argument("--games-per-cand", type=int, default=20)
@@ -581,6 +933,10 @@ def main(argv: list[str] | None = None) -> None:
         max_new_bests=args.max_new_bests,
         meta_plateau_cycles=args.meta_plateau_cycles,
         bootstrap_min_league_for_pool=args.bootstrap_min_league_for_pool,
+        league_rebench_on_mismatch=bool(args.league_rebench_on_mismatch),
+        league_rebench_games=args.league_rebench_games,
+        league_rebench_max_steps=args.league_rebench_max_steps,
+        league_rebench_seed=args.league_rebench_seed,
         population=args.population,
         elite=args.elite,
         games_per_cand=args.games_per_cand,

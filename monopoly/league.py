@@ -136,6 +136,16 @@ def _ensure_entry_fields(entry: dict[str, Any], league_dir: Path) -> dict[str, A
                 normalized["hash"] = None
         else:
             normalized["hash"] = None
+    if not normalized.get("params_hash") and normalized.get("hash"):
+        normalized["params_hash"] = normalized.get("hash")
+    if normalized.get("params_hash") and not normalized.get("hash"):
+        normalized["hash"] = normalized.get("params_hash")
+    if not normalized.get("eval_protocol_hash"):
+        normalized["eval_protocol_hash"] = "unknown"
+    if not normalized.get("bench_timestamp"):
+        created = normalized.get("created_at")
+        if created:
+            normalized["bench_timestamp"] = created
     return normalized
 
 
@@ -265,6 +275,7 @@ def add_to_league(
     meta: dict[str, Any] | str | None,
     league_dir: Path,
     top_k: int = DEFAULT_TOP_K,
+    entry_fields: dict[str, Any] | None = None,
 ) -> tuple[bool, bool, int | None]:
     league_dir = Path(league_dir)
     index = load_index(league_dir)
@@ -291,11 +302,18 @@ def add_to_league(
         "rank": None,
         "name": name,
         "hash": params_hash,
+        "params_hash": params_hash,
         "fitness": _coerce_fitness(fitness),
         "path": Path(filename).as_posix(),
         "created_at": _utc_now(),
         "meta": meta_payload,
     }
+    if entry_fields:
+        reserved = {"rank", "name", "hash", "params_hash", "fitness", "path", "created_at", "meta"}
+        for key, value in entry_fields.items():
+            if key in reserved:
+                continue
+            entry[key] = value
 
     items.append(entry)
     next_index = {"version": INDEX_VERSION, "top_k": top_k, "items": items}

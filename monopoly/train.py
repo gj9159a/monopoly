@@ -7,7 +7,7 @@ import json
 import random
 import time
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from multiprocessing import get_context
 from pathlib import Path
 from statistics import mean, pstdev
@@ -35,6 +35,7 @@ class EvalResult:
 
 
 LAST_TRAIN_THINKING_USED = False
+SCORING_VERSION = "score_v1"
 
 
 def _disable_thinking(params: BotParams) -> BotParams:
@@ -76,6 +77,45 @@ def _hash_params(params: BotParams) -> str:
     return _hash_text(payload)
 
 
+def _hash_protocol(payload: dict[str, object]) -> str:
+    serialized = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+    return _hash_text(serialized)
+
+
+def _eval_protocol_hash(protocol: dict[str, object]) -> str:
+    return _hash_protocol(protocol)
+
+
+def _build_eval_protocol(
+    *,
+    players: int,
+    games_per_cand: int,
+    max_steps: int,
+    cand_seats: str,
+    seed: int,
+    opponents: str,
+) -> dict[str, object]:
+    return {
+        "protocol_kind": "training_eval",
+        "players": players,
+        "games_per_cand": games_per_cand,
+        "max_steps": max_steps,
+        "seat_rotation_policy": {
+            "mode": cand_seats,
+            "start": "seed % players",
+            "seed_source": "master_seed",
+        },
+        "eval_seeds_policy": {"mode": "seed + idx", "seed_source": "master_seed"},
+        "opponent_sampling_policy": {
+            "source": opponents,
+            "pool_source": "league_top_k",
+            "includes_baseline": opponents == "mixed",
+        },
+        "master_seed": seed,
+        "scoring_version": SCORING_VERSION,
+    }
+
+
 def _hash_params_list(params_list: Sequence[BotParams]) -> str:
     payload = "|".join(_hash_params(params) for params in params_list)
     return _hash_text(payload)
@@ -110,6 +150,10 @@ def _parse_bool(value: str | None) -> bool:
     if normalized in {"0", "false", "no", "n", "off"}:
         return False
     raise ValueError(f"Некорректное значение bool: {value}")
+
+
+def _utc_now() -> str:
+    return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
 def play_game(
@@ -558,6 +602,7 @@ def main(argv: list[str] | None = None) -> None:
         cache_path=None,
     )
     best_fitness = eval_results[0].fitness
+    best_win_rate = eval_results[0].win_rate
     print(f"Best fitness: {best_fitness:.4f}")
     quick_cases = build_eval_cases(
         seeds=[args.seed + idx for idx in range(20)],
@@ -594,12 +639,28 @@ def main(argv: list[str] | None = None) -> None:
             f"baseline_bench=win_rate:{win_rate:.3f},net:{avg_net:.1f}"
         )
         meta_payload = {"name": f"best_{timestamp}", "note": meta}
+        eval_protocol = _build_eval_protocol(
+            players=args.players,
+            games_per_cand=args.games_per_cand,
+            max_steps=args.max_steps,
+            cand_seats=args.cand_seats,
+            seed=args.seed,
+            opponents=args.opponents,
+        )
+        entry_fields = {
+            "eval_protocol_hash": _eval_protocol_hash(eval_protocol),
+            "eval_protocol": eval_protocol,
+            "bench_timestamp": _utc_now(),
+            "win_rate": float(best_win_rate),
+            "source_run_id": Path(checkpoint_dir).name,
+        }
         added, changed_topk, rank = add_to_league(
             params=params,
             fitness=best_fitness,
             meta=meta_payload,
             league_dir=args.league_dir,
             top_k=16,
+            entry_fields=entry_fields,
         )
         print(f"League auto-add: added={added}, rank={rank}, changed_topk={changed_topk}")
 
