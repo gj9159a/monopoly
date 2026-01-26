@@ -8,6 +8,7 @@ from pathlib import Path
 from uuid import uuid4
 
 from monopoly.engine import create_engine
+from monopoly.features import jail_exit_heat_group, landing_prob_group
 from monopoly.league import add_to_league
 from monopoly.params import BotParams, ThinkingConfig, decide_build_actions, save_params
 from monopoly.train import (
@@ -151,6 +152,24 @@ def test_fitness_priority_win() -> None:
         coefficients=FITNESS_COEFFS,
     )
     assert fitness_a > fitness_b
+
+
+def test_group_heat_favors_orange_red() -> None:
+    state = create_engine(num_players=2, seed=1).state
+    orange_heat = jail_exit_heat_group(state, "orange")
+    red_heat = jail_exit_heat_group(state, "red")
+    light_blue_heat = jail_exit_heat_group(state, "light_blue")
+    brown_heat = jail_exit_heat_group(state, "brown")
+    assert orange_heat > light_blue_heat
+    assert orange_heat > brown_heat
+    assert red_heat > light_blue_heat
+
+
+def test_landing_prob_group_biases_orange() -> None:
+    state = create_engine(num_players=2, seed=1).state
+    orange_prob = landing_prob_group(state, "orange")
+    light_blue_prob = landing_prob_group(state, "light_blue")
+    assert orange_prob > light_blue_prob
 
 
 def test_league_rotation() -> None:
