@@ -5,6 +5,7 @@ import csv
 import hashlib
 import json
 import math
+import multiprocessing as mp
 import random
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -21,8 +22,8 @@ from .train import ADVANTAGE_SCALE, FITNESS_CONFIDENCE, FITNESS_COEFFS, PLACE_TO
 DEFAULT_TOP_K_POOL = 8
 DEFAULT_LEAGUE_CAP = 16
 DEFAULT_MAX_NEW_BESTS = 16
-DEFAULT_META_PLATEAU_CYCLES = 5
-DEFAULT_BOOTSTRAP_MIN = 4
+DEFAULT_META_PLATEAU_CYCLES = 3
+DEFAULT_BOOTSTRAP_MIN = 8
 DEFAULT_EPS_IMPROVEMENT = 1e-4
 CYCLE_SEED_STEP = 10007
 POOL_SNAPSHOT_STEP = 9973
@@ -281,6 +282,42 @@ def _write_dedup_example(
     write_json_atomic(cycle_dir / "dedup_example.json", payload)
 
 
+def _rebench_worker(
+    args: tuple[
+        BotParams,
+        list[BotParams],
+        BotParams,
+        Path,
+        int,
+        int,
+        int,
+        str,
+        int,
+    ]
+) -> tuple[dict[str, float | str], bool]:
+    candidate, pool, baseline, league_dir, games, seed, max_steps, cand_seats, players = args
+    pool_fallback = False
+    if not pool:
+        pool = [baseline]
+        pool_fallback = True
+    result = bench(
+        candidate=candidate,
+        baseline=baseline,
+        league_dir=league_dir,
+        opponents="league",
+        num_players=players,
+        games=games,
+        seed=seed,
+        max_steps=max_steps,
+        cand_seats=cand_seats,
+        min_games=games,
+        delta=0.0,
+        seeds_file=None,
+        opponents_pool=pool,
+    )
+    return result, pool_fallback
+
+
 def _rebench_league(
     league_dir: Path,
     baseline_path: Path,
@@ -293,6 +330,7 @@ def _rebench_league(
     seed: int,
     cand_seats: str,
     players: int,
+    workers: int,
 ) -> dict[str, Any]:
     index = load_index(league_dir)
     items = index.get("items", [])[:league_cap]
@@ -315,6 +353,43 @@ def _rebench_league(
         entry["params_hash"] = params_hash
         entries.append((entry, params))
 
+    params_list = [params for _, params in entries]
+    jobs: list[
+        tuple[
+            BotParams,
+            list[BotParams],
+            BotParams,
+            Path,
+            int,
+            int,
+            int,
+            str,
+            int,
+        ]
+    ] = []
+    for idx, (_, params) in enumerate(entries):
+        pool = params_list[:idx] + params_list[idx + 1 :]
+        jobs.append(
+            (
+                params,
+                pool,
+                baseline,
+                league_dir,
+                int(games),
+                int(seed),
+                int(max_steps),
+                str(cand_seats),
+                int(players),
+            )
+        )
+
+    if int(workers) > 1 and len(jobs) > 1:
+        ctx = mp.get_context("spawn")
+        with ctx.Pool(processes=int(workers)) as pool:
+            results = pool.map(_rebench_worker, jobs)
+    else:
+        results = [_rebench_worker(job) for job in jobs]
+
     log_path = runs_dir / REBENCH_LOG_FILE
     log_path.parent.mkdir(parents=True, exist_ok=True)
     with log_path.open("w", newline="", encoding="utf-8") as handle:
@@ -332,27 +407,7 @@ def _rebench_league(
                 "pool_fallback",
             ]
         )
-        for entry, params in entries:
-            pool = [other_params for other_entry, other_params in entries if other_entry is not entry]
-            pool_fallback = False
-            if not pool:
-                pool = [baseline]
-                pool_fallback = True
-            result = bench(
-                candidate=params,
-                baseline=baseline,
-                league_dir=league_dir,
-                opponents="league",
-                num_players=players,
-                games=games,
-                seed=seed,
-                max_steps=max_steps,
-                cand_seats=cand_seats,
-                min_games=games,
-                delta=0.0,
-                seeds_file=None,
-                opponents_pool=pool,
-            )
+        for (entry, _), (result, pool_fallback) in zip(entries, results, strict=False):
             fitness = float(result["fitness"])
             win_rate = float(result["win_rate"])
             ci_low = float(result["ci_low"])
@@ -629,6 +684,7 @@ def run_autoevolve(
             seed=rebench_seed,
             cand_seats="rotate",
             players=6,
+            workers=workers,
         )
         status.update(
             {
