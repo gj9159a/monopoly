@@ -142,6 +142,7 @@ def test_fitness_priority_win() -> None:
         place_score=0.0,
         advantage=-0.5,
         cutoff_rate=0.0,
+        avg_steps_norm=0.5,
         coefficients=FITNESS_COEFFS,
     )
     fitness_b = fitness_from_components(
@@ -149,6 +150,7 @@ def test_fitness_priority_win() -> None:
         place_score=0.0,
         advantage=2.0,
         cutoff_rate=0.0,
+        avg_steps_norm=0.1,
         coefficients=FITNESS_COEFFS,
     )
     assert fitness_a > fitness_b

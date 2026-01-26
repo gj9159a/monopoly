@@ -191,7 +191,15 @@ def bench(
     place_score = mean(place_scores) if place_scores else 0.0
     advantage = mean(advantages) if advantages else 0.0
     cutoff_rate = cutoff_count / max(1, games_played)
-    fitness = fitness_from_components(win_lcb, place_score, advantage, cutoff_rate)
+    avg_steps = mean(steps_list) if steps_list else 0.0
+    avg_steps_norm = avg_steps / max(1.0, float(max_steps))
+    fitness = fitness_from_components(
+        win_lcb,
+        place_score,
+        advantage,
+        cutoff_rate,
+        avg_steps_norm,
+    )
     net_ci_low, net_ci_high = _mean_ci(net_sum, net_sum_sq, games_played)
     return {
         "games": float(games_played),
@@ -207,7 +215,7 @@ def bench(
         "avg_net_worth": net_sum / games_played if games_played else 0.0,
         "net_worth_ci_low": net_ci_low,
         "net_worth_ci_high": net_ci_high,
-        "avg_steps": mean(steps_list) if steps_list else 0.0,
+        "avg_steps": avg_steps,
         "stop_reason": stop_reason,
     }
 

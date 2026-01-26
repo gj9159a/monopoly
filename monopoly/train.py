@@ -36,6 +36,7 @@ class EvalResult:
     place_score: float
     advantage: float
     cutoff_rate: float
+    avg_steps: float
     avg_net_worth: float
 
 
@@ -48,7 +49,8 @@ FITNESS_COEFFS = {
     "win_lcb": 1000.0,
     "place_score": 10.0,
     "advantage": 1.0,
-    "cutoff_rate": -5.0,
+    "cutoff_rate": -50.0,
+    "avg_steps_norm": -20.0,
 }
 
 
@@ -130,6 +132,7 @@ def fitness_from_components(
     place_score: float,
     advantage: float,
     cutoff_rate: float,
+    avg_steps_norm: float,
     coefficients: dict[str, float] | None = None,
 ) -> float:
     coeffs = coefficients or FITNESS_COEFFS
@@ -138,6 +141,7 @@ def fitness_from_components(
         + coeffs["place_score"] * place_score
         + coeffs["advantage"] * advantage
         + coeffs["cutoff_rate"] * cutoff_rate
+        + coeffs["avg_steps_norm"] * avg_steps_norm
     )
 
 
@@ -366,7 +370,7 @@ def _eval_case(
         case_index,
         seed,
     )
-    state, _, _ = play_game(params_by_seat, num_players, game_seed, max_steps)
+    state, _, steps = play_game(params_by_seat, num_players, game_seed, max_steps)
     ended_by_cutoff = not state.game_over
     placements = placements_by_net_worth(state)
     placement = placements.get(seat, num_players)
@@ -381,7 +385,7 @@ def _eval_case(
     others_mean = sum(others) / len(others) if others else 0.0
     advantage = advantage_from_net_worth(net_worth, others_mean)
     cutoff_flag = 1.0 if ended_by_cutoff else 0.0
-    return cand_index, success, place_score_value, advantage, cutoff_flag, net_worth
+    return cand_index, success, place_score_value, advantage, cutoff_flag, net_worth, steps
 
 
 def evaluate_candidates(
@@ -474,16 +478,18 @@ def evaluate_candidates(
                 "advantage": 0.0,
                 "cutoff": 0.0,
                 "net": 0.0,
+                "steps": 0.0,
                 "count": 0.0,
             }
             for cand_index in keys
         }
-        for cand_index, success, place_score_value, advantage, cutoff_flag, net_worth in raw_results:
+        for cand_index, success, place_score_value, advantage, cutoff_flag, net_worth, steps in raw_results:
             sums[cand_index]["wins_eff"] += success
             sums[cand_index]["place_score"] += place_score_value
             sums[cand_index]["advantage"] += advantage
             sums[cand_index]["cutoff"] += cutoff_flag
             sums[cand_index]["net"] += net_worth
+            sums[cand_index]["steps"] += steps
             sums[cand_index]["count"] += 1
 
         for cand_index, key in keys.items():
@@ -496,7 +502,15 @@ def evaluate_candidates(
             place_score_value = sums[cand_index]["place_score"] / count
             advantage_value = sums[cand_index]["advantage"] / count
             cutoff_rate = sums[cand_index]["cutoff"] / count
-            fitness = fitness_from_components(win_lcb, place_score_value, advantage_value, cutoff_rate)
+            avg_steps = sums[cand_index]["steps"] / count
+            avg_steps_norm = avg_steps / max(1.0, float(max_steps))
+            fitness = fitness_from_components(
+                win_lcb,
+                place_score_value,
+                advantage_value,
+                cutoff_rate,
+                avg_steps_norm,
+            )
             avg_net = sums[cand_index]["net"] / count
             result = EvalResult(
                 fitness=fitness,
@@ -505,6 +519,7 @@ def evaluate_candidates(
                 place_score=place_score_value,
                 advantage=advantage_value,
                 cutoff_rate=cutoff_rate,
+                avg_steps=avg_steps,
                 avg_net_worth=avg_net,
             )
             results[cand_index] = result
