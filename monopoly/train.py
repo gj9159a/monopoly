@@ -49,8 +49,8 @@ FITNESS_COEFFS = {
     "win_lcb": 1000.0,
     "place_score": 10.0,
     "advantage": 1.0,
-    "cutoff_rate": -50.0,
-    "avg_steps_norm": -20.0,
+    "cutoff_rate": -100.0,
+    "avg_steps_norm": -100.0,
 }
 
 
