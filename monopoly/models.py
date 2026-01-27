@@ -78,6 +78,17 @@ class Player:
 
 
 @dataclass(slots=True)
+class TradeHistory:
+    last_reject_score: float = 0.0
+    last_offer_hash: str = ""
+    last_reject_turn: int = -1
+    from_props: tuple[int, ...] = ()
+    to_props: tuple[int, ...] = ()
+    from_worth: float = 0.0
+    to_worth: float = 0.0
+
+
+@dataclass(slots=True)
 class GameState:
     seed: int
     rng: random.Random
@@ -94,3 +105,4 @@ class GameState:
     stage_candidate: str = "early"
     stage_candidate_ticks: int = 0
     stage_last_turn: int = -1
+    trade_history: dict[tuple[int, int], TradeHistory] = field(default_factory=dict)

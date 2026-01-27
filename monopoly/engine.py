@@ -1,12 +1,14 @@
 from __future__ import annotations
 
+import hashlib
+import json
 import random
 from pathlib import Path
 
 from .bots import Bot, create_bots
 from .data_loader import load_board, load_cards, load_rules
-from .params import BotParams, normalize_auction_price
-from .models import Card, Cell, DeckState, Event, GameState, Player
+from .params import BotParams, evaluate_trade_for_player, normalize_auction_price
+from .models import Card, Cell, DeckState, Event, GameState, Player, TradeHistory
 
 
 class Engine:
@@ -54,8 +56,10 @@ class Engine:
         if player.in_jail:
             jail_events, advance_player = self._handle_jail_turn(player, turn_index)
             events.extend(jail_events)
-            if not player.in_jail and not player.bankrupt:
-                events.extend(self._bot_economy_phase(player, turn_index))
+            if not player.bankrupt:
+                if not player.in_jail:
+                    events.extend(self._bot_economy_phase(player, turn_index))
+                events.extend(self._bot_trade_phase(player, turn_index))
             events.extend(self._check_game_end(turn_index))
             state.event_log.extend(events)
             state.turn_index += 1
@@ -69,6 +73,8 @@ class Engine:
         events.extend(roll_events)
         if not player.bankrupt and not player.in_jail:
             events.extend(self._bot_economy_phase(player, turn_index))
+        if not player.bankrupt:
+            events.extend(self._bot_trade_phase(player, turn_index))
         events.extend(self._check_game_end(turn_index))
 
         state.event_log.extend(events)
@@ -1184,6 +1190,414 @@ class Engine:
             elif action_type == "build":
                 events.extend(self._build_on_property(player, cell, turn_index))
         return events
+
+    def _bot_trade_phase(self, player: Player, turn_index: int) -> list[Event]:
+        state = self.state
+        if state.rules.no_trades or state.game_over or player.bankrupt:
+            return []
+        decision = self.bots[player.player_id].decide(
+            state,
+            {"type": "trade_offer", "player_id": player.player_id},
+        )
+        if decision.get("action") != "offer":
+            return []
+        offer_raw = decision.get("offer", {})
+        offer, error = self._normalize_trade_offer(offer_raw, player.player_id)
+        if error:
+            return [
+                Event(
+                    type="TRADE_INVALID",
+                    turn_index=turn_index,
+                    player_id=player.player_id,
+                    msg_ru=f"{player.name} попытался предложить некорректную сделку ({error})",
+                    payload={"reason": error},
+                )
+            ]
+        valid, reason = self._validate_trade_offer(offer)
+        if not valid:
+            return [
+                Event(
+                    type="TRADE_INVALID",
+                    turn_index=turn_index,
+                    player_id=player.player_id,
+                    msg_ru=f"{player.name} предложил недопустимую сделку ({reason})",
+                    payload={"reason": reason, "offer": offer},
+                )
+            ]
+
+        from_id = offer["from_player"]
+        to_id = offer["to_player"]
+        from_player = state.players[from_id]
+        to_player = state.players[to_id]
+        offer_hash = self._trade_offer_hash(offer)
+
+        events: list[Event] = [
+            Event(
+                type="TRADE_OFFER",
+                turn_index=turn_index,
+                player_id=from_id,
+                msg_ru=f"{from_player.name} предлагает сделку {to_player.name}",
+                payload={"offer": offer},
+            )
+        ]
+
+        decision_to = self.bots[to_id].decide(
+            state,
+            {"type": "trade_accept", "player_id": to_id, "offer": offer},
+        )
+        score = float(decision_to.get("score", 0.0))
+        valid_decision = bool(decision_to.get("valid", True))
+        accept = decision_to.get("action") == "accept" and valid_decision and score > 0.0
+        policy_to = str(decision_to.get("mortgage_policy") or "keep")
+
+        if not self._trade_offer_improved(from_id, to_id, score):
+            events.append(
+                Event(
+                    type="TRADE_REJECT",
+                    turn_index=turn_index,
+                    player_id=to_id,
+                    msg_ru=f"{to_player.name} отклонил сделку от {from_player.name} (оффер не лучше предыдущего)",
+                    payload={"reason": "offer_not_improved", "score": score},
+                )
+            )
+            return events
+
+        if not accept:
+            events.append(
+                Event(
+                    type="TRADE_REJECT",
+                    turn_index=turn_index,
+                    player_id=to_id,
+                    msg_ru=f"{to_player.name} отклонил сделку от {from_player.name}",
+                    payload={"reason": "reject", "score": score},
+                )
+            )
+            self._record_trade_reject(from_id, to_id, score, offer_hash, turn_index)
+            return events
+
+        score_from, policy_from, valid_from, _cash_after = evaluate_trade_for_player(
+            state, from_id, offer, self.bots[from_id].params
+        )
+        if not valid_from:
+            events.append(
+                Event(
+                    type="TRADE_REJECT",
+                    turn_index=turn_index,
+                    player_id=from_id,
+                    msg_ru=f"{from_player.name} не может завершить сделку",
+                    payload={"reason": "invalid_from", "score": float(score_from)},
+                )
+            )
+            self._record_trade_reject(from_id, to_id, score, offer_hash, turn_index)
+            return events
+
+        policy_from = str(policy_from or "keep")
+
+        events.append(
+            Event(
+                type="TRADE_ACCEPT",
+                turn_index=turn_index,
+                player_id=to_id,
+                msg_ru=f"{to_player.name} принял сделку от {from_player.name}",
+                payload={"score": score},
+            )
+        )
+        events.extend(self._apply_trade(offer, policy_from, policy_to, turn_index))
+        if (from_id, to_id) in state.trade_history:
+            del state.trade_history[(from_id, to_id)]
+        return events
+
+    def _normalize_trade_offer(
+        self, offer_raw: dict[str, object] | None, proposer_id: int
+    ) -> tuple[dict[str, Any] | None, str | None]:
+        if not isinstance(offer_raw, dict):
+            return None, "offer_not_dict"
+        def _coerce_props(value: object) -> list[int]:
+            if value is None:
+                return []
+            if isinstance(value, (list, tuple, set)):
+                items: list[int] = []
+                for item in value:
+                    try:
+                        items.append(int(item))
+                    except (TypeError, ValueError):
+                        continue
+                return sorted(set(items))
+            try:
+                return [int(value)]
+            except (TypeError, ValueError):
+                return []
+        try:
+            from_id = int(offer_raw.get("from_player", proposer_id))
+            to_id = int(offer_raw.get("to_player", -1))
+        except (TypeError, ValueError):
+            return None, "invalid_players"
+        if from_id != proposer_id:
+            return None, "from_mismatch"
+        give_props = _coerce_props(offer_raw.get("give_props", []))
+        receive_props = _coerce_props(offer_raw.get("receive_props", []))
+        give_cash = int(offer_raw.get("give_cash", 0) or 0)
+        receive_cash = int(offer_raw.get("receive_cash", 0) or 0)
+        give_cards = int(offer_raw.get("give_cards", 0) or 0)
+        receive_cards = int(offer_raw.get("receive_cards", 0) or 0)
+        if give_cash < 0 or receive_cash < 0 or give_cards < 0 or receive_cards < 0:
+            return None, "negative_values"
+        offer = {
+            "from_player": from_id,
+            "to_player": to_id,
+            "give_props": give_props,
+            "receive_props": receive_props,
+            "give_cash": give_cash,
+            "receive_cash": receive_cash,
+            "give_cards": give_cards,
+            "receive_cards": receive_cards,
+        }
+        return offer, None
+
+    def _validate_trade_offer(self, offer: dict[str, Any]) -> tuple[bool, str]:
+        state = self.state
+        from_id = int(offer.get("from_player", -1))
+        to_id = int(offer.get("to_player", -1))
+        if from_id == to_id:
+            return False, "same_player"
+        if from_id < 0 or to_id < 0:
+            return False, "invalid_player"
+        if from_id >= len(state.players) or to_id >= len(state.players):
+            return False, "invalid_player"
+        if state.players[from_id].bankrupt or state.players[to_id].bankrupt:
+            return False, "bankrupt"
+        give_props = list(offer.get("give_props", []))
+        receive_props = list(offer.get("receive_props", []))
+        if set(give_props) & set(receive_props):
+            return False, "duplicate_props"
+        if not give_props and not receive_props and not offer.get("give_cash") and not offer.get("receive_cash"):
+            if not offer.get("give_cards") and not offer.get("receive_cards"):
+                return False, "empty_offer"
+        if offer.get("give_cash", 0) > state.players[from_id].money:
+            return False, "insufficient_cash_from"
+        if offer.get("receive_cash", 0) > state.players[to_id].money:
+            return False, "insufficient_cash_to"
+        if offer.get("give_cards", 0) > len(state.players[from_id].get_out_of_jail_cards):
+            return False, "insufficient_cards_from"
+        if offer.get("receive_cards", 0) > len(state.players[to_id].get_out_of_jail_cards):
+            return False, "insufficient_cards_to"
+        for idx in give_props:
+            if idx < 0 or idx >= len(state.board):
+                return False, "invalid_property"
+            cell = state.board[idx]
+            if cell.owner_id != from_id:
+                return False, "wrong_owner"
+            if not self._tradeable_cell(cell):
+                return False, "not_tradeable"
+        for idx in receive_props:
+            if idx < 0 or idx >= len(state.board):
+                return False, "invalid_property"
+            cell = state.board[idx]
+            if cell.owner_id != to_id:
+                return False, "wrong_owner"
+            if not self._tradeable_cell(cell):
+                return False, "not_tradeable"
+        cash_after_from = (
+            state.players[from_id].money
+            - int(offer.get("give_cash", 0))
+            + int(offer.get("receive_cash", 0))
+        )
+        cash_after_to = (
+            state.players[to_id].money
+            - int(offer.get("receive_cash", 0))
+            + int(offer.get("give_cash", 0))
+        )
+        fee_from = self._trade_interest_fee(receive_props)
+        fee_to = self._trade_interest_fee(give_props)
+        if cash_after_from < fee_from:
+            return False, "interest_fee_from"
+        if cash_after_to < fee_to:
+            return False, "interest_fee_to"
+        return True, "ok"
+
+    def _trade_offer_hash(self, offer: dict[str, Any]) -> str:
+        payload = json.dumps(offer, sort_keys=True, ensure_ascii=True)
+        return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+    def _trade_interest_fee(self, props: list[int]) -> int:
+        interest = float(self.state.rules.interest_rate)
+        total = 0
+        for idx in props:
+            cell = self.state.board[idx]
+            if cell.mortgaged:
+                total += int((cell.mortgage_value or 0) * interest)
+        return total
+
+    def _tradeable_cell(self, cell: Cell) -> bool:
+        if cell.cell_type not in {"property", "railroad", "utility"}:
+            return False
+        if cell.houses > 0 or cell.hotels > 0:
+            return False
+        if cell.cell_type == "property" and cell.group:
+            for other in self.state.board:
+                if other.group == cell.group and (other.houses > 0 or other.hotels > 0):
+                    return False
+        return True
+
+    def _trade_offer_improved(self, from_id: int, to_id: int, score: float) -> bool:
+        history = self.state.trade_history.get((from_id, to_id))
+        if history is None or history.last_reject_turn < 0:
+            return True
+        if self._trade_history_reset_needed(history, from_id, to_id):
+            self.state.trade_history.pop((from_id, to_id), None)
+            return True
+        threshold = history.last_reject_score + abs(history.last_reject_score) * 0.02
+        return score > threshold
+
+    def _trade_history_reset_needed(self, history: TradeHistory, from_id: int, to_id: int) -> bool:
+        current_from_props = self._player_property_snapshot(from_id)
+        current_to_props = self._player_property_snapshot(to_id)
+        if history.from_props and history.from_props != current_from_props:
+            return True
+        if history.to_props and history.to_props != current_to_props:
+            return True
+        current_from_worth = self._player_net_worth(from_id)
+        current_to_worth = self._player_net_worth(to_id)
+        if history.from_worth > 0:
+            if abs(current_from_worth - history.from_worth) / history.from_worth > 0.3:
+                return True
+        elif current_from_worth != history.from_worth:
+            return True
+        if history.to_worth > 0:
+            if abs(current_to_worth - history.to_worth) / history.to_worth > 0.3:
+                return True
+        elif current_to_worth != history.to_worth:
+            return True
+        return False
+
+    def _record_trade_reject(
+        self, from_id: int, to_id: int, score: float, offer_hash: str, turn_index: int
+    ) -> None:
+        history = self.state.trade_history.get((from_id, to_id))
+        if history is None:
+            history = TradeHistory()
+            self.state.trade_history[(from_id, to_id)] = history
+        history.last_reject_score = float(score)
+        history.last_offer_hash = offer_hash
+        history.last_reject_turn = turn_index
+        history.from_props = self._player_property_snapshot(from_id)
+        history.to_props = self._player_property_snapshot(to_id)
+        history.from_worth = self._player_net_worth(from_id)
+        history.to_worth = self._player_net_worth(to_id)
+
+    def _player_property_snapshot(self, player_id: int) -> tuple[int, ...]:
+        owned = [cell.index for cell in self.state.board if cell.owner_id == player_id]
+        return tuple(sorted(owned))
+
+    def _player_net_worth(self, player_id: int) -> float:
+        player = self.state.players[player_id]
+        total = float(player.money)
+        for cell in self.state.board:
+            if cell.owner_id != player_id:
+                continue
+            if cell.mortgaged:
+                total += float(cell.mortgage_value or 0)
+            else:
+                total += float(cell.price or 0)
+            total += float((cell.houses + cell.hotels) * (cell.house_cost or 0))
+        return total
+
+    def _apply_trade(
+        self, offer: dict[str, Any], policy_from: str, policy_to: str, turn_index: int
+    ) -> list[Event]:
+        state = self.state
+        from_id = int(offer["from_player"])
+        to_id = int(offer["to_player"])
+        from_player = state.players[from_id]
+        to_player = state.players[to_id]
+        give_cash = int(offer.get("give_cash", 0))
+        receive_cash = int(offer.get("receive_cash", 0))
+
+        from_player.money -= give_cash
+        from_player.money += receive_cash
+        to_player.money -= receive_cash
+        to_player.money += give_cash
+
+        self._transfer_cards(from_player, to_player, int(offer.get("give_cards", 0)))
+        self._transfer_cards(to_player, from_player, int(offer.get("receive_cards", 0)))
+
+        for idx in offer.get("give_props", []):
+            self._transfer_property(int(idx), from_id, to_id)
+        for idx in offer.get("receive_props", []):
+            self._transfer_property(int(idx), to_id, from_id)
+
+        fee_from, unmortgaged_from = self._apply_trade_mortgage(
+            offer.get("receive_props", []), from_player, policy_from
+        )
+        fee_to, unmortgaged_to = self._apply_trade_mortgage(
+            offer.get("give_props", []), to_player, policy_to
+        )
+
+        payload = {
+            "from_player": from_id,
+            "to_player": to_id,
+            "give_props": list(offer.get("give_props", [])),
+            "receive_props": list(offer.get("receive_props", [])),
+            "give_cash": give_cash,
+            "receive_cash": receive_cash,
+            "give_cards": int(offer.get("give_cards", 0)),
+            "receive_cards": int(offer.get("receive_cards", 0)),
+            "from_policy": policy_from,
+            "to_policy": policy_to,
+            "from_fee": fee_from,
+            "to_fee": fee_to,
+            "from_unmortgaged": unmortgaged_from,
+            "to_unmortgaged": unmortgaged_to,
+        }
+        return [
+            Event(
+                type="TRADE_EXECUTE",
+                turn_index=turn_index,
+                player_id=from_id,
+                msg_ru=f"Сделка выполнена: {from_player.name} ↔ {to_player.name}",
+                payload=payload,
+            )
+        ]
+
+    def _transfer_property(self, cell_index: int, from_id: int, to_id: int) -> None:
+        cell = self.state.board[cell_index]
+        if cell.owner_id != from_id:
+            return
+        cell.owner_id = to_id
+        from_player = self.state.players[from_id]
+        to_player = self.state.players[to_id]
+        from_player.properties = [idx for idx in from_player.properties if idx != cell_index]
+        if cell_index not in to_player.properties:
+            to_player.properties.append(cell_index)
+
+    def _transfer_cards(self, from_player: Player, to_player: Player, count: int) -> None:
+        if count <= 0:
+            return
+        for _ in range(min(count, len(from_player.get_out_of_jail_cards))):
+            card = from_player.get_out_of_jail_cards.pop()
+            to_player.get_out_of_jail_cards.append(card)
+
+    def _apply_trade_mortgage(
+        self, props: list[int], player: Player, policy: str
+    ) -> tuple[int, list[int]]:
+        fee_total = 0
+        unmortgaged: list[int] = []
+        for idx in props:
+            cell = self.state.board[int(idx)]
+            if not cell.mortgaged:
+                continue
+            if policy == "unmortgage":
+                cost = self._unmortgage_cost(cell)
+                if player.money >= cost:
+                    player.money -= cost
+                    cell.mortgaged = False
+                    fee_total += cost
+                    unmortgaged.append(cell.index)
+                    continue
+            fee = int((cell.mortgage_value or 0) * float(self.state.rules.interest_rate))
+            player.money -= fee
+            fee_total += fee
+        return fee_total, unmortgaged
 
     def _run_auction(self, cell: Cell, turn_index: int) -> list[Event]:
         state = self.state

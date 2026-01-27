@@ -113,11 +113,29 @@ JAIL_FEATURES = [
     "saved_risk_if_stay",
 ]
 
+TRADE_FEATURES = [
+    "bias",
+    "cash_delta",
+    "cash_after",
+    "liquidity_ratio",
+    "property_value_delta",
+    "mortgage_value_delta",
+    "monopoly_delta",
+    "opponent_monopoly_delta",
+    "group_heat_delta",
+    "group_heat_vs_base_delta",
+    "cell_heat_delta",
+    "railroad_delta",
+    "utility_delta",
+    "card_delta",
+]
+
 DECISION_FEATURES = {
     "auction": AUCTION_FEATURES,
     "build": BUILD_FEATURES,
     "mortgage": MORTGAGE_FEATURES,
     "jail": JAIL_FEATURES,
+    "trade": TRADE_FEATURES,
 }
 
 
@@ -240,6 +258,22 @@ def _default_weights() -> dict[str, dict[str, dict[str, float]]]:
         "lost_income_if_stay": 0.0,
         "saved_risk_if_stay": 0.0,
     }
+    trade_base = {
+        "bias": 0.0,
+        "cash_delta": 0.6,
+        "cash_after": 0.4,
+        "liquidity_ratio": 0.4,
+        "property_value_delta": 0.7,
+        "mortgage_value_delta": -0.5,
+        "monopoly_delta": 1.2,
+        "opponent_monopoly_delta": -1.0,
+        "group_heat_delta": 0.4,
+        "group_heat_vs_base_delta": 0.3,
+        "cell_heat_delta": 0.2,
+        "railroad_delta": 0.4,
+        "utility_delta": 0.2,
+        "card_delta": 0.8,
+    }
     return {
         "auction": _stage_weights(
             auction_base,
@@ -265,6 +299,12 @@ def _default_weights() -> dict[str, dict[str, dict[str, float]]]:
             mid={"action_pay": 0.2},
             late={"action_roll": 0.2, "danger_if_pay": -0.9},
         ),
+        "trade": _stage_weights(
+            trade_base,
+            early={"cash_after": 0.5, "monopoly_delta": 1.0},
+            mid={"monopoly_delta": 1.4, "group_heat_delta": 0.5},
+            late={"liquidity_ratio": 0.6, "opponent_monopoly_delta": -1.2},
+        ),
     }
 
 
@@ -280,6 +320,7 @@ PARAM_SPECS: list[ParamSpec] = [
     ParamSpec("cash_buffer_base", 0, 600, 120, int),
     ParamSpec("cash_buffer_per_house", 0, 80, 20, int),
     ParamSpec("max_bid_fraction", 0.2, 1.0, 0.2, float),
+    ParamSpec("trade_card_value", 0, 200, 15, int),
 ]
 
 for key in _WEIGHT_KEYS:
@@ -292,14 +333,20 @@ class BotParams:
     cash_buffer_base: int = 150
     cash_buffer_per_house: int = 20
     max_bid_fraction: float = 0.95
+    trade_card_value: int = 50
     thinking: ThinkingConfig = field(default_factory=ThinkingConfig)
 
     def to_dict(self) -> dict[str, Any]:
+        ordered_weights: dict[str, dict[str, dict[str, float]]] = {}
+        for decision in DECISION_FEATURES:
+            stages = self.weights.get(decision, {})
+            ordered_weights[decision] = {stage: dict(stages.get(stage, {})) for stage in STAGES}
         payload = {
             "cash_buffer_base": self.cash_buffer_base,
             "cash_buffer_per_house": self.cash_buffer_per_house,
             "max_bid_fraction": self.max_bid_fraction,
-            "weights": self.weights,
+            "trade_card_value": self.trade_card_value,
+            "weights": ordered_weights,
         }
         if self.thinking.enabled or self.thinking != ThinkingConfig():
             payload["thinking"] = {
@@ -357,17 +404,19 @@ class BotParams:
             normalized.get("cash_buffer_per_house", cls.cash_buffer_per_house)
         )
         max_bid_fraction = float(normalized.get("max_bid_fraction", cls.max_bid_fraction))
+        trade_card_value = int(normalized.get("trade_card_value", cls.trade_card_value))
 
         return cls(
             weights=weights,
             cash_buffer_base=cash_buffer_base,
             cash_buffer_per_house=cash_buffer_per_house,
             max_bid_fraction=max_bid_fraction,
+            trade_card_value=trade_card_value,
             thinking=thinking,
         )
 
     def to_json(self, path: Path) -> None:
-        path.write_text(json.dumps(self.to_dict(), indent=2, sort_keys=True), encoding="utf-8")
+        path.write_text(json.dumps(self.to_dict(), indent=2, sort_keys=False), encoding="utf-8")
 
     @classmethod
     def from_json(cls, path: Path) -> "BotParams":
@@ -390,7 +439,7 @@ class BotParams:
         )
 
 
-BASE_FIELDS = {"cash_buffer_base", "cash_buffer_per_house", "max_bid_fraction"}
+BASE_FIELDS = {"cash_buffer_base", "cash_buffer_per_house", "max_bid_fraction", "trade_card_value"}
 
 
 def params_to_vector(params: BotParams) -> list[float]:
@@ -1094,5 +1143,339 @@ def decide_jail_exit(state: GameState, player: Player, params: BotParams) -> str
     }
     candidates.append((_score_action(weights, features_roll), "roll"))
 
+    candidates.sort(key=lambda item: item[0], reverse=True)
+    return candidates[0][1]
+
+
+def _tradeable_cells(state: GameState, owner_id: int) -> list[Cell]:
+    cells: list[Cell] = []
+    for cell in state.board:
+        if cell.owner_id != owner_id:
+            continue
+        if cell.cell_type not in {"property", "railroad", "utility"}:
+            continue
+        if cell.houses > 0 or cell.hotels > 0:
+            continue
+        if cell.cell_type == "property" and cell.group:
+            group_cells = _group_cells(state, cell.group)
+            if any(_property_level(other.houses, other.hotels) > 0 for other in group_cells):
+                continue
+        cells.append(cell)
+    return cells
+
+
+def _offer_list(value: Any) -> list[int]:
+    if not isinstance(value, list):
+        return []
+    result: list[int] = []
+    for item in value:
+        try:
+            result.append(int(item))
+        except (TypeError, ValueError):
+            continue
+    return result
+
+
+def _trade_side(offer: dict[str, Any], player_id: int) -> tuple[list[int], list[int], int, int, int, int, int | None]:
+    from_id = int(offer.get("from_player", -1))
+    to_id = int(offer.get("to_player", -1))
+    give_props = _offer_list(offer.get("give_props"))
+    receive_props = _offer_list(offer.get("receive_props"))
+    give_cash = int(offer.get("give_cash", 0) or 0)
+    receive_cash = int(offer.get("receive_cash", 0) or 0)
+    give_cards = int(offer.get("give_cards", 0) or 0)
+    receive_cards = int(offer.get("receive_cards", 0) or 0)
+    if player_id == from_id:
+        return (
+            receive_props,
+            give_props,
+            receive_cash,
+            give_cash,
+            receive_cards,
+            give_cards,
+            to_id,
+        )
+    if player_id == to_id:
+        return (
+            give_props,
+            receive_props,
+            give_cash,
+            receive_cash,
+            give_cards,
+            receive_cards,
+            from_id,
+        )
+    return ([], [], 0, 0, 0, 0, None)
+
+
+def _trade_owner_map(state: GameState, offer: dict[str, Any]) -> dict[int, int]:
+    owner_map: dict[int, int] = {}
+    from_id = int(offer.get("from_player", -1))
+    to_id = int(offer.get("to_player", -1))
+    for idx in _offer_list(offer.get("give_props")):
+        owner_map[idx] = to_id
+    for idx in _offer_list(offer.get("receive_props")):
+        owner_map[idx] = from_id
+    return owner_map
+
+
+def _monopoly_count(state: GameState, owner_id: int, owner_map: dict[int, int] | None = None) -> int:
+    groups: dict[str, list[int]] = {}
+    for cell in state.board:
+        if cell.cell_type != "property" or not cell.group:
+            continue
+        groups.setdefault(cell.group, []).append(cell.index)
+    count = 0
+    for cells in groups.values():
+        if all((owner_map.get(idx) if owner_map else state.board[idx].owner_id) == owner_id for idx in cells):
+            count += 1
+    return count
+
+
+def _count_owned_type(
+    state: GameState,
+    owner_id: int,
+    cell_type: str,
+    owner_map: dict[int, int] | None = None,
+) -> int:
+    total = 0
+    for cell in state.board:
+        if cell.cell_type != cell_type:
+            continue
+        owner = owner_map.get(cell.index) if owner_map else cell.owner_id
+        if owner == owner_id:
+            total += 1
+    return total
+
+
+def _trade_property_sums(
+    state: GameState, props: list[int], player: Player, params: BotParams
+) -> tuple[float, float, float, float, float]:
+    value = 0.0
+    group_heat_sum = 0.0
+    group_heat_vs_base_sum = 0.0
+    cell_heat_sum = 0.0
+    mortgaged_value = 0.0
+    for idx in props:
+        if idx < 0 or idx >= len(state.board):
+            continue
+        cell = state.board[idx]
+        value += estimate_asset_value(state, player, cell, params)
+        group_heat_sum += group_heat(state, cell.group)
+        group_heat_vs_base_sum += group_heat_vs_base(state, cell.group)
+        cell_heat_sum += cell_heat(state, cell.index)
+        if cell.mortgaged:
+            mortgaged_value += float(cell.mortgage_value or 0)
+    return value, group_heat_sum, group_heat_vs_base_sum, cell_heat_sum, mortgaged_value
+
+
+def evaluate_trade_for_player(
+    state: GameState, player_id: int, offer: dict[str, Any], params: BotParams
+) -> tuple[float, str | None, bool, float]:
+    from_id = int(offer.get("from_player", -1))
+    to_id = int(offer.get("to_player", -1))
+    if player_id not in {from_id, to_id}:
+        return 0.0, None, False, 0.0
+
+    props_in, props_out, cash_in, cash_out, cards_in, cards_out, other_id = _trade_side(
+        offer, player_id
+    )
+    player = state.players[player_id]
+    cash_before = float(player.money)
+    cash_after_cash = cash_before + float(cash_in) - float(cash_out)
+    start_cash = max(1.0, float(state.rules.starting_cash))
+    stage = game_stage(state)
+    weights = params.weights["trade"][stage]
+    owner_map = _trade_owner_map(state, offer)
+
+    value_in, heat_in, heat_base_in, cell_heat_in, mortgaged_in_value = _trade_property_sums(
+        state, props_in, player, params
+    )
+    value_out, heat_out, heat_base_out, cell_heat_out, mortgaged_out_value = _trade_property_sums(
+        state, props_out, player, params
+    )
+
+    monopoly_before = _monopoly_count(state, player_id)
+    monopoly_after = _monopoly_count(state, player_id, owner_map)
+    monopoly_delta = (monopoly_after - monopoly_before) / 8.0
+
+    opponent_delta = 0.0
+    if other_id is not None and other_id >= 0:
+        opp_before = _monopoly_count(state, other_id)
+        opp_after = _monopoly_count(state, other_id, owner_map)
+        opponent_delta = (opp_after - opp_before) / 8.0
+
+    rail_before = _count_owned_type(state, player_id, "railroad")
+    rail_after = _count_owned_type(state, player_id, "railroad", owner_map)
+    util_before = _count_owned_type(state, player_id, "utility")
+    util_after = _count_owned_type(state, player_id, "utility", owner_map)
+
+    cash_delta = (float(cash_in) - float(cash_out)) / start_cash
+    property_value_delta = (value_in - value_out) / start_cash
+    group_heat_delta = heat_in - heat_out
+    group_heat_vs_base_delta = heat_base_in - heat_base_out
+    cell_heat_delta = cell_heat_in - cell_heat_out
+    railroad_delta = (rail_after - rail_before) / 4.0
+    utility_delta = (util_after - util_before) / 2.0
+    card_delta_value = float(cards_in - cards_out) * float(params.trade_card_value)
+    card_delta = card_delta_value / start_cash
+
+    mortgaged_props_in = [idx for idx in props_in if 0 <= idx < len(state.board) and state.board[idx].mortgaged]
+    interest = float(state.rules.interest_rate)
+    fee_keep = sum(int((state.board[idx].mortgage_value or 0) * interest) for idx in mortgaged_props_in)
+    fee_unmortgage = sum(
+        int((state.board[idx].mortgage_value or 0) * (1.0 + interest)) for idx in mortgaged_props_in
+    )
+
+    best_score = float("-inf")
+    best_policy: str | None = None
+    best_cash_after = cash_after_cash
+
+    policy_options: list[tuple[str | None, float, float]] = []
+    if mortgaged_props_in:
+        policy_options.append(("keep", fee_keep, mortgaged_in_value))
+        policy_options.append(("unmortgage", fee_unmortgage, 0.0))
+    else:
+        policy_options.append((None, 0.0, 0.0))
+
+    for policy, fee, mortgaged_in_after in policy_options:
+        cash_after = cash_after_cash - fee
+        if cash_after < 0:
+            continue
+        mortgage_value_delta = (mortgaged_in_after - mortgaged_out_value) / start_cash
+        features = {
+            "bias": 1.0,
+            "cash_delta": cash_delta,
+            "cash_after": cash_after / start_cash,
+            "liquidity_ratio": cash_after / max(1.0, cash_before),
+            "property_value_delta": property_value_delta,
+            "mortgage_value_delta": mortgage_value_delta,
+            "monopoly_delta": monopoly_delta,
+            "opponent_monopoly_delta": opponent_delta,
+            "group_heat_delta": group_heat_delta,
+            "group_heat_vs_base_delta": group_heat_vs_base_delta,
+            "cell_heat_delta": cell_heat_delta,
+            "railroad_delta": railroad_delta,
+            "utility_delta": utility_delta,
+            "card_delta": card_delta,
+        }
+        score = _score_action(weights, features)
+        if score > best_score:
+            best_score = score
+            best_policy = policy
+            best_cash_after = cash_after
+
+    valid = best_score != float("-inf")
+    return best_score, best_policy, valid, float(best_cash_after)
+
+
+def decide_trade_accept(
+    state: GameState, player: Player, offer: dict[str, Any], params: BotParams
+) -> dict[str, Any]:
+    score, policy, valid, cash_after = evaluate_trade_for_player(state, player.player_id, offer, params)
+    if not valid or score <= 0.0:
+        return {"action": "reject", "score": float(score), "valid": bool(valid)}
+    return {
+        "action": "accept",
+        "score": float(score),
+        "valid": bool(valid),
+        "mortgage_policy": policy or "keep",
+        "cash_after": float(cash_after),
+    }
+
+
+def decide_trade_offer(state: GameState, player: Player, params: BotParams) -> dict[str, Any] | None:
+    if player.bankrupt:
+        return None
+    opponents = [p for p in state.players if p.player_id != player.player_id and not p.bankrupt]
+    if not opponents:
+        return None
+
+    tradeable_self = _tradeable_cells(state, player.player_id)
+    buffer = compute_cash_buffer(state, player, params)
+    max_cash = max(0, player.money - buffer)
+
+    candidates: list[tuple[float, dict[str, Any]]] = []
+
+    def _add_candidate(offer: dict[str, Any]) -> None:
+        score, _policy, valid, _cash_after = evaluate_trade_for_player(state, player.player_id, offer, params)
+        if not valid or score <= 0.0:
+            return
+        candidates.append((score, offer))
+
+    for opponent in opponents:
+        tradeable_opp = _tradeable_cells(state, opponent.player_id)
+        tradeable_opp.sort(key=lambda cell: estimate_asset_value(state, opponent, cell, params), reverse=True)
+        for cell in tradeable_opp[:3]:
+            base_price = int(cell.price or cell.mortgage_value or 0)
+            if base_price <= 0:
+                continue
+            for factor in (0.7, 0.9, 1.1):
+                offer_cash = int(base_price * factor)
+                if offer_cash <= 0 or offer_cash > max_cash:
+                    continue
+                offer = {
+                    "from_player": player.player_id,
+                    "to_player": opponent.player_id,
+                    "give_props": [],
+                    "receive_props": [cell.index],
+                    "give_cash": offer_cash,
+                    "receive_cash": 0,
+                    "give_cards": 0,
+                    "receive_cards": 0,
+                }
+                _add_candidate(offer)
+
+        tradeable_self.sort(key=lambda cell: estimate_asset_value(state, player, cell, params), reverse=True)
+        for cell in tradeable_self[:3]:
+            base_price = int(cell.price or cell.mortgage_value or 0)
+            if base_price <= 0:
+                continue
+            for factor in (0.9, 1.1):
+                ask = int(base_price * factor)
+                if ask <= 0 or ask > opponent.money:
+                    continue
+                offer = {
+                    "from_player": player.player_id,
+                    "to_player": opponent.player_id,
+                    "give_props": [cell.index],
+                    "receive_props": [],
+                    "give_cash": 0,
+                    "receive_cash": ask,
+                    "give_cards": 0,
+                    "receive_cards": 0,
+                }
+                _add_candidate(offer)
+
+        if player.get_out_of_jail_cards and opponent.money > 0:
+            ask = min(opponent.money, int(params.trade_card_value))
+            offer = {
+                "from_player": player.player_id,
+                "to_player": opponent.player_id,
+                "give_props": [],
+                "receive_props": [],
+                "give_cash": 0,
+                "receive_cash": ask,
+                "give_cards": 1,
+                "receive_cards": 0,
+            }
+            _add_candidate(offer)
+
+        if opponent.get_out_of_jail_cards and max_cash > 0:
+            bid = min(max_cash, int(params.trade_card_value))
+            offer = {
+                "from_player": player.player_id,
+                "to_player": opponent.player_id,
+                "give_props": [],
+                "receive_props": [],
+                "give_cash": bid,
+                "receive_cash": 0,
+                "give_cards": 0,
+                "receive_cards": 1,
+            }
+            _add_candidate(offer)
+
+    if not candidates:
+        return None
     candidates.sort(key=lambda item: item[0], reverse=True)
     return candidates[0][1]

@@ -22,6 +22,7 @@ class FixedRNG:
 def _engine_with_rng(values: list[int], num_players: int = 2, bot_params: BotParams | None = None):
     engine = create_engine(num_players=num_players, seed=1, bot_params=bot_params)
     engine.state.rng = FixedRNG(values)
+    engine.state.rules.no_trades = True
     return engine
 
 

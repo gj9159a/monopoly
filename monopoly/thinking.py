@@ -74,6 +74,10 @@ def fast_decide(state: GameState, context: dict[str, Any], params: BotParams) ->
         debt = int(context.get("debt", 0))
         actions = decide_liquidation(state, player, debt, params)
         return {"actions": actions}
+    if decision_type == "trade_offer":
+        return {"action": "pass"}
+    if decision_type == "trade_accept":
+        return {"action": "reject", "score": 0.0, "valid": True}
     raise ValueError(f"Неизвестный тип контекста: {decision_type}")
 
 

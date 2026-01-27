@@ -9,6 +9,8 @@ from .params import (
     choose_auction_bid,
     compute_cash_buffer,
     decide_auction_bid,
+    decide_trade_accept,
+    decide_trade_offer,
     decide_build_actions,
     decide_jail_exit,
     decide_liquidation,
@@ -60,6 +62,10 @@ class Bot:
             return self._decide_economy(state, context)
         if decision_type == "liquidation":
             return self._decide_liquidation(state, context)
+        if decision_type == "trade_offer":
+            return self._decide_trade_offer(state, context)
+        if decision_type == "trade_accept":
+            return self._decide_trade_accept(state, context)
         raise ValueError(f"Неизвестный тип контекста: {decision_type}")
 
     def _decide_auction_bid(self, state: GameState, context: dict[str, Any]) -> dict[str, Any]:
@@ -97,6 +103,22 @@ class Bot:
         debt = int(context.get("debt", 0))
         actions = decide_liquidation(state, player, debt, self.params)
         return {"actions": actions}
+
+    def _decide_trade_offer(self, state: GameState, context: dict[str, Any]) -> dict[str, Any]:
+        player_id = int(context["player_id"])
+        player = state.players[player_id]
+        offer = decide_trade_offer(state, player, self.params)
+        if offer is None:
+            return {"action": "pass"}
+        return {"action": "offer", "offer": offer}
+
+    def _decide_trade_accept(self, state: GameState, context: dict[str, Any]) -> dict[str, Any]:
+        player_id = int(context["player_id"])
+        player = state.players[player_id]
+        offer = context.get("offer", {})
+        if not isinstance(offer, dict):
+            return {"action": "reject", "score": 0.0, "valid": False}
+        return decide_trade_accept(state, player, offer, self.params)
 
     def prioritize_mortgage(self, cells: list[Cell], state: GameState, player: Player) -> list[Cell]:
         if self.params.thinking.enabled and cells:
