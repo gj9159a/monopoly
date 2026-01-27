@@ -22,6 +22,11 @@ from .features import (
 from .models import Cell, GameState, Player
 
 STAGES = ("early", "mid", "late")
+STAGE_ORDER = {"early": 0, "mid": 1, "late": 2}
+STAGE_HYSTERESIS_TICKS = 6
+EARLY_TO_MID_UNOWNED = 6
+LATE_FREE_HOUSES = 10
+LATE_MONOPOLY_LEVEL = 3
 
 AUCTION_FEATURES = [
     "bias",
@@ -433,18 +438,84 @@ def save_params(params: BotParams, path: str | Path) -> None:
     raise ValueError(f"Неизвестный формат параметров: {path}")
 
 
-def game_stage(state: GameState) -> str:
-    owned = sum(
-        1
+def _buyable_cells(state: GameState) -> list[Cell]:
+    return [
+        cell
         for cell in state.board
-        if cell.owner_id is not None and cell.cell_type in {"property", "railroad", "utility"}
-    )
-    buildings = sum(cell.houses + cell.hotels * 5 for cell in state.board)
-    if buildings >= 15 or owned >= 28:
-        return "late"
-    if buildings >= 5 or owned >= 12:
-        return "mid"
-    return "early"
+        if cell.cell_type in {"property", "railroad", "utility"}
+    ]
+
+
+def _monopoly_groups(state: GameState) -> list[list[Cell]]:
+    groups: dict[str, list[Cell]] = {}
+    for cell in state.board:
+        if cell.cell_type != "property" or not cell.group:
+            continue
+        groups.setdefault(cell.group, []).append(cell)
+    monopolies: list[list[Cell]] = []
+    for cells in groups.values():
+        owner = cells[0].owner_id
+        if owner is None:
+            continue
+        if all(cell.owner_id == owner for cell in cells):
+            monopolies.append(cells)
+    return monopolies
+
+
+def _desired_stage(state: GameState) -> str:
+    buyables = _buyable_cells(state)
+    unowned = sum(1 for cell in buyables if cell.owner_id is None)
+    monopolies = _monopoly_groups(state)
+    m = len(monopolies)
+    houses = sum(cell.houses for cell in state.board)
+    free_houses = max(0, int(state.rules.bank_houses) - houses)
+    bankruptcies = sum(1 for player in state.players if player.bankrupt)
+
+    max_monopoly_level = 0.0
+    for cells in monopolies:
+        levels = [_property_level(cell.houses, cell.hotels) for cell in cells]
+        if levels:
+            max_monopoly_level = max(max_monopoly_level, sum(levels) / len(levels))
+
+    desired = "early"
+    if m >= 1 or houses > 0 or unowned <= EARLY_TO_MID_UNOWNED:
+        desired = "mid"
+    if (
+        bankruptcies > 0
+        or free_houses <= LATE_FREE_HOUSES
+        or max_monopoly_level >= LATE_MONOPOLY_LEVEL
+    ):
+        desired = "late"
+    return desired
+
+
+def game_stage(state: GameState) -> str:
+    if state.stage_last_turn == state.turn_index:
+        return state.stage
+    state.stage_last_turn = state.turn_index
+
+    desired = _desired_stage(state)
+    current = state.stage
+    desired_index = STAGE_ORDER.get(desired, 0)
+    current_index = STAGE_ORDER.get(current, 0)
+
+    if desired_index <= current_index:
+        state.stage = current
+        state.stage_candidate = current
+        state.stage_candidate_ticks = 0
+        return state.stage
+
+    if state.stage_candidate != desired:
+        state.stage_candidate = desired
+        state.stage_candidate_ticks = 1
+    else:
+        state.stage_candidate_ticks += 1
+
+    if state.stage_candidate_ticks >= STAGE_HYSTERESIS_TICKS:
+        state.stage = desired
+        state.stage_candidate = desired
+        state.stage_candidate_ticks = 0
+    return state.stage
 
 
 def compute_cash_buffer(state: GameState, player: Player, params: BotParams) -> int:

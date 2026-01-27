@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from monopoly.engine import create_engine
-from monopoly.params import BotParams, decide_auction_bid, game_stage
+from monopoly.params import BotParams, STAGE_HYSTERESIS_TICKS, decide_auction_bid, game_stage
 
 
 def test_policy_determinism() -> None:
@@ -20,22 +20,21 @@ def test_stage_transitions() -> None:
     state = engine.state
     assert game_stage(state) == "early"
 
-    owned = 0
     for cell in state.board:
         if cell.cell_type in {"property", "railroad", "utility"}:
             cell.owner_id = 0
-            owned += 1
-            if owned >= 12:
-                break
+
+    for _ in range(STAGE_HYSTERESIS_TICKS - 1):
+        state.turn_index += 1
+        assert game_stage(state) == "early"
+    state.turn_index += 1
     assert game_stage(state) == "mid"
 
-    buildings = 0
-    for cell in state.board:
-        if cell.cell_type == "property":
-            cell.houses = 4
-            buildings += 4
-            if buildings >= 16:
-                break
+    state.players[1].bankrupt = True
+    for _ in range(STAGE_HYSTERESIS_TICKS - 1):
+        state.turn_index += 1
+        assert game_stage(state) == "mid"
+    state.turn_index += 1
     assert game_stage(state) == "late"
 
 

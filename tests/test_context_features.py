@@ -9,7 +9,7 @@ from monopoly.features import (
     railroad_synergy,
     utility_synergy,
 )
-from monopoly.params import BotParams, STAGES, decide_jail_exit
+from monopoly.params import BotParams, STAGES, STAGE_HYSTERESIS_TICKS, decide_jail_exit, game_stage
 
 
 def _clear_payments_in_range(state, start_pos: int) -> None:
@@ -144,3 +144,34 @@ def test_params_backward_compat() -> None:
     assert params.weights["build"]["early"]["denial_value"] == 0.0
     assert params.weights["jail"]["early"]["lost_income_if_stay"] == 0.0
     assert params.weights["mortgage"]["early"]["positional_threat_self"] == 0.0
+
+
+def test_game_stage_progression() -> None:
+    engine = create_engine(num_players=6, seed=1)
+    state = engine.state
+    assert game_stage(state) == "early"
+
+    buyables = [
+        cell
+        for cell in state.board
+        if cell.cell_type in {"property", "railroad", "utility"}
+    ]
+    for cell in buyables:
+        cell.owner_id = 0
+
+    for _ in range(STAGE_HYSTERESIS_TICKS - 1):
+        state.turn_index += 1
+        assert game_stage(state) == "early"
+    state.turn_index += 1
+    assert game_stage(state) == "mid"
+
+    state.players[1].bankrupt = True
+    for _ in range(STAGE_HYSTERESIS_TICKS - 1):
+        state.turn_index += 1
+        assert game_stage(state) == "mid"
+    state.turn_index += 1
+    assert game_stage(state) == "late"
+
+    state.players[1].bankrupt = False
+    state.turn_index += 1
+    assert game_stage(state) == "late"

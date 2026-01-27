@@ -90,3 +90,7 @@ class GameState:
     game_over: bool = False
     winner_id: int | None = None
     decks: dict[str, DeckState] = field(default_factory=dict)
+    stage: str = "early"
+    stage_candidate: str = "early"
+    stage_candidate_ticks: int = 0
+    stage_last_turn: int = -1
