@@ -40,6 +40,7 @@ def _run_autoevolve(
         "eps_winrate": 1e9,
         "eps_fitness": 1e9,
         "min_progress_games": 1,
+        "bench_max_games": 1,
         "delta": 0.0,
         "max_steps": 10,
         "workers": 1,

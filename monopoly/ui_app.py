@@ -115,7 +115,7 @@ def _utc_now() -> str:
 
 
 def _default_workers() -> int:
-    return max(1, (os.cpu_count() or 1) - 2)
+    return max(1, (os.cpu_count() or 1) - 4)
 
 
 def _html_escape(text: str) -> str:
@@ -983,7 +983,8 @@ def _start_autoevolve(
     elite: int,
     epoch_iters: int,
     plateau_epochs: int,
-    min_games: int,
+    bench_min_games: int,
+    bench_max_games: int,
     plateau_delta: float,
     games_per_cand: int,
     max_steps: int,
@@ -1019,7 +1020,9 @@ def _start_autoevolve(
         "--elite",
         str(elite),
         "--min-progress-games",
-        str(min_games),
+        str(bench_min_games),
+        "--bench-max-games",
+        str(bench_max_games),
         "--eps-winrate",
         str(plateau_delta),
         "--eps-fitness",
@@ -1326,14 +1329,14 @@ def render_training_mode() -> None:
     with st.sidebar:
         st.header("Тренировка")
         st.caption("Auto-evolve: bootstrap -> league -> meta-cycle")
-        top_k_pool = st.number_input("Top-K pool", min_value=1, value=8, step=1)
+        top_k_pool = st.number_input("Top-K pool", min_value=1, value=16, step=1)
         league_cap = st.number_input("League cap", min_value=1, value=16, step=1)
         max_new_bests = st.number_input("Max new bests", min_value=1, value=16, step=1)
-        meta_plateau_cycles = st.number_input("Meta-plateau cycles", min_value=1, value=5, step=1)
+        meta_plateau_cycles = st.number_input("Meta-plateau cycles", min_value=1, value=2, step=1)
         bootstrap_min_league_for_pool = st.number_input(
             "Bootstrap min league",
             min_value=0,
-            value=4,
+            value=8,
             step=1,
         )
         league_rebench_on_mismatch = st.checkbox(
@@ -1352,27 +1355,30 @@ def render_training_mode() -> None:
         with st.expander("Advanced"):
             seed = st.number_input("Seed", min_value=0, max_value=999999, value=123, step=1)
             workers = st.number_input("Workers", min_value=1, value=_default_workers(), step=1)
-            population = st.number_input("Population", min_value=4, value=48, step=2)
-            elite = st.number_input("Elite", min_value=1, value=12, step=1)
-            games_per_cand = st.number_input("Games per candidate", min_value=1, value=20, step=1)
+            population = st.number_input("Population", min_value=4, value=64, step=1)
+            elite = st.number_input("Elite", min_value=1, value=16, step=1)
+            games_per_cand = st.number_input("Games per candidate", min_value=1, value=32, step=1)
             league_rebench_games = st.number_input(
                 "Games for re-benchmark",
-                min_value=1,
-                value=int(games_per_cand),
-                step=1,
+                min_value=10,
+                value=256,
+                step=10,
                 disabled=not league_rebench_on_mismatch,
             )
-            max_steps = st.number_input("Max steps", min_value=100, value=2000, step=100)
-            epoch_iters = st.number_input("Epoch iters", min_value=1, value=10, step=1)
-            plateau_epochs = st.number_input("Plateau epochs", min_value=1, value=10, step=1)
+            bench_max_games = st.number_input("Bench games (max)", min_value=32, value=512, step=32)
+            bench_min_games = st.number_input("Early-stop min games", min_value=10, value=128, step=10)
+            max_steps = st.number_input("Max steps", min_value=100, value=2048, step=100)
+            epoch_iters = st.number_input("Epoch iters", min_value=1, value=8, step=1)
+            plateau_epochs = st.number_input("Plateau epochs", min_value=1, value=2, step=1)
             plateau_delta = st.number_input(
                 "Plateau delta",
                 min_value=0.0,
-                value=0.005,
-                step=0.001,
-                format="%.3f",
+                value=1.0,
+                step=0.1,
+                format="%.1f",
             )
-            min_games = st.number_input("Min games", min_value=10, value=400, step=20)
+            if bench_min_games > bench_max_games:
+                st.warning("Early-stop min games должен быть <= Bench games (max).")
 
         st.subheader("Runs")
         selected_name = None
@@ -1402,6 +1408,8 @@ def render_training_mode() -> None:
         proc = st.session_state.get("train_proc")
         if proc and proc.poll() is None:
             st.warning("Тренировка уже запущена.")
+        elif bench_min_games > bench_max_games:
+            st.error("Early-stop min games должен быть <= Bench games (max).")
         else:
             _start_autoevolve(
                 workers=int(workers),
@@ -1409,7 +1417,8 @@ def render_training_mode() -> None:
                 elite=int(elite),
                 epoch_iters=int(epoch_iters),
                 plateau_epochs=int(plateau_epochs),
-                min_games=int(min_games),
+                bench_min_games=int(bench_min_games),
+                bench_max_games=int(bench_max_games),
                 plateau_delta=float(plateau_delta),
                 games_per_cand=int(games_per_cand),
                 max_steps=int(max_steps),
@@ -1434,29 +1443,33 @@ def render_training_mode() -> None:
     if resume_btn:
         runs_dir_raw = st.session_state.get("train_runs_dir")
         if runs_dir_raw:
-            _start_autoevolve(
-                workers=int(workers),
-                population=int(population),
-                elite=int(elite),
-                epoch_iters=int(epoch_iters),
-                plateau_epochs=int(plateau_epochs),
-                min_games=int(min_games),
-                plateau_delta=float(plateau_delta),
-                games_per_cand=int(games_per_cand),
-                max_steps=int(max_steps),
-                seed=int(seed),
-                top_k_pool=int(top_k_pool),
-                league_cap=int(league_cap),
-                max_new_bests=int(max_new_bests),
-                meta_plateau_cycles=int(meta_plateau_cycles),
-                bootstrap_min_league_for_pool=int(bootstrap_min_league_for_pool),
-                league_rebench_on_mismatch=bool(league_rebench_on_mismatch),
-                league_rebench_games=int(league_rebench_games),
-                league_dir=league_dir,
-                baseline_path=baseline_path,
-                runs_dir=Path(runs_dir_raw),
-                resume=True,
-            )
+            if bench_min_games > bench_max_games:
+                st.error("Early-stop min games должен быть <= Bench games (max).")
+            else:
+                _start_autoevolve(
+                    workers=int(workers),
+                    population=int(population),
+                    elite=int(elite),
+                    epoch_iters=int(epoch_iters),
+                    plateau_epochs=int(plateau_epochs),
+                    bench_min_games=int(bench_min_games),
+                    bench_max_games=int(bench_max_games),
+                    plateau_delta=float(plateau_delta),
+                    games_per_cand=int(games_per_cand),
+                    max_steps=int(max_steps),
+                    seed=int(seed),
+                    top_k_pool=int(top_k_pool),
+                    league_cap=int(league_cap),
+                    max_new_bests=int(max_new_bests),
+                    meta_plateau_cycles=int(meta_plateau_cycles),
+                    bootstrap_min_league_for_pool=int(bootstrap_min_league_for_pool),
+                    league_rebench_on_mismatch=bool(league_rebench_on_mismatch),
+                    league_rebench_games=int(league_rebench_games),
+                    league_dir=league_dir,
+                    baseline_path=baseline_path,
+                    runs_dir=Path(runs_dir_raw),
+                    resume=True,
+                )
 
     runs_dir_raw = st.session_state.get("train_runs_dir")
     if runs_dir_raw:
@@ -1681,7 +1694,7 @@ def render_live_mode(cards_status: dict[str, Any] | None = None) -> None:
             disabled=not thinking_enabled or not cache_enabled,
         )
         seed = st.number_input("Seed", min_value=0, max_value=999999, value=42, step=1)
-        refresh_ms = st.slider("Обновление UI (мс)", min_value=500, max_value=1500, value=1000, step=100)
+        refresh_ms = st.slider("Обновление UI (мс)", min_value=500, max_value=1500, value=500, step=100)
         start_btn = st.button("Запустить матч 6 deep-ботов", type="primary")
         stop_btn = st.button("Остановить live матч")
         live_path = st.text_input(

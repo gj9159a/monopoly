@@ -470,6 +470,8 @@ def _ensure_status_defaults(status: dict[str, Any], runs_dir: Path) -> dict[str,
     status.setdefault("league_rebench_games", 0)
     status.setdefault("league_rebench_max_steps", 0)
     status.setdefault("league_rebench_seed", 0)
+    status.setdefault("bench_max_games", 0)
+    status.setdefault("min_progress_games", 0)
     status.setdefault("candidates_produced", 0)
     status.setdefault("candidates_evaluated", 0)
     status.setdefault("candidates_eligible_for_league", 0)
@@ -580,12 +582,15 @@ def run_autoevolve(
     eps_winrate: float,
     eps_fitness: float,
     min_progress_games: int,
+    bench_max_games: int,
     delta: float,
     max_steps: int,
     workers: int,
     resume: bool,
     eps_improvement: float = DEFAULT_EPS_IMPROVEMENT,
 ) -> None:
+    if bench_max_games < min_progress_games:
+        raise ValueError("bench_max_games должен быть >= min_progress_games")
     runs_dir.mkdir(parents=True, exist_ok=True)
     status_path = _status_path(runs_dir)
 
@@ -618,6 +623,7 @@ def run_autoevolve(
             "eps_winrate": float(eps_winrate),
             "eps_fitness": float(eps_fitness),
             "min_progress_games": int(min_progress_games),
+            "bench_max_games": int(bench_max_games),
             "delta": float(delta),
             "max_steps": int(max_steps),
             "workers": int(workers),
@@ -795,6 +801,7 @@ def run_autoevolve(
             eps_winrate=eps_winrate,
             eps_fitness=eps_fitness,
             min_progress_games=min_progress_games,
+            bench_max_games=bench_max_games,
             delta=delta,
             seed=cycle_seed,
             players=6,
@@ -985,7 +992,8 @@ def build_parser() -> argparse.ArgumentParser:
     run_parser.add_argument("--plateau-epochs", type=int, default=10)
     run_parser.add_argument("--eps-winrate", type=float, default=0.01)
     run_parser.add_argument("--eps-fitness", type=float, default=0.02)
-    run_parser.add_argument("--min-progress-games", type=int, default=400)
+    run_parser.add_argument("--min-progress-games", type=int, default=128)
+    run_parser.add_argument("--bench-max-games", type=int, default=512)
     run_parser.add_argument("--delta", type=float, default=0.005)
     run_parser.add_argument("--max-steps", type=int, default=2000)
     run_parser.add_argument("--workers", type=int, default=1)
@@ -1026,6 +1034,7 @@ def main(argv: list[str] | None = None) -> None:
         eps_winrate=args.eps_winrate,
         eps_fitness=args.eps_fitness,
         min_progress_games=args.min_progress_games,
+        bench_max_games=args.bench_max_games,
         delta=args.delta,
         max_steps=args.max_steps,
         workers=args.workers,

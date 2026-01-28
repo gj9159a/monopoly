@@ -147,6 +147,7 @@ def run_autotrain(
     eps_winrate: float,
     eps_fitness: float,
     min_progress_games: int,
+    bench_max_games: int,
     delta: float,
     seed: int,
     players: int,
@@ -169,6 +170,8 @@ def run_autotrain(
         raise ValueError("elite должен быть <= population")
     if not 2 <= players <= 6:
         raise ValueError("players должен быть в диапазоне 2..6")
+    if bench_max_games < min_progress_games:
+        raise ValueError("bench_max_games должен быть >= min_progress_games")
 
     runs_dir.mkdir(parents=True, exist_ok=True)
     status_path = runs_dir / "status.json"
@@ -343,7 +346,7 @@ def run_autotrain(
                 league_dir=league_dir,
                 opponents=opponents,
                 num_players=players,
-                games=min_progress_games,
+                games=bench_max_games,
                 seed=seed,
                 max_steps=max_steps,
                 cand_seats=cand_seats,
@@ -472,7 +475,8 @@ def build_parser() -> argparse.ArgumentParser:
     run_parser.add_argument("--plateau-epochs", type=int, default=3)
     run_parser.add_argument("--eps-winrate", type=float, default=0.01)
     run_parser.add_argument("--eps-fitness", type=float, default=0.02)
-    run_parser.add_argument("--min-progress-games", type=int, default=500)
+    run_parser.add_argument("--min-progress-games", type=int, default=128)
+    run_parser.add_argument("--bench-max-games", type=int, default=512)
     run_parser.add_argument("--delta", type=float, default=1.0)
     run_parser.add_argument("--seed", type=int, default=123)
     run_parser.add_argument("--players", type=int, default=6)
@@ -521,6 +525,7 @@ def main(argv: list[str] | None = None) -> None:
         eps_winrate=args.eps_winrate,
         eps_fitness=args.eps_fitness,
         min_progress_games=args.min_progress_games,
+        bench_max_games=args.bench_max_games,
         delta=args.delta,
         seed=args.seed,
         players=args.players,
