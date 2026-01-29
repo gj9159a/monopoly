@@ -25,6 +25,9 @@ DEFAULT_MAX_NEW_BESTS = 16
 DEFAULT_META_PLATEAU_CYCLES = 3
 DEFAULT_BOOTSTRAP_MIN = 8
 DEFAULT_EPS_IMPROVEMENT = 1e-4
+DEFAULT_GAMES_PER_CAND_MIN = 8
+DEFAULT_GAMES_PER_CAND_MAX = 64
+DEFAULT_GAMES_PER_CAND_TARGET_CI = 0.20
 CYCLE_SEED_STEP = 10007
 POOL_SNAPSHOT_STEP = 9973
 REBENCH_LOG_FILE = "rebench_log.csv"
@@ -470,6 +473,14 @@ def _ensure_status_defaults(status: dict[str, Any], runs_dir: Path) -> dict[str,
     status.setdefault("league_rebench_games", 0)
     status.setdefault("league_rebench_max_steps", 0)
     status.setdefault("league_rebench_seed", 0)
+    status.setdefault("auto_games_per_cand", False)
+    status.setdefault("games_per_cand_min", 0)
+    status.setdefault("games_per_cand_max", 0)
+    status.setdefault("games_per_cand_target_ci", 0.0)
+    status.setdefault("games_per_cand_current", 0)
+    status.setdefault("games_per_cand_prev", 0)
+    status.setdefault("games_per_cand_prev_ci_width", None)
+    status.setdefault("cycle_games_per_cand", 0)
     status.setdefault("bench_max_games", 0)
     status.setdefault("min_progress_games", 0)
     status.setdefault("candidates_produced", 0)
@@ -544,6 +555,43 @@ def _append_seeds_used(
         handle.write("\n")
 
 
+def _clamp_int(value: int, min_value: int, max_value: int) -> int:
+    return max(min_value, min(max_value, int(value)))
+
+
+def _load_prev_bench_ci(runs_dir: Path, cycle_index: int) -> tuple[float | None, float | None]:
+    if cycle_index <= 0:
+        return None, None
+    bench_path = runs_dir / f"cycle_{cycle_index:03d}" / "last_bench.json"
+    payload = read_json(bench_path, default=None)
+    if not isinstance(payload, dict):
+        return None, None
+    ci_low = payload.get("ci_low")
+    ci_high = payload.get("ci_high")
+    if not isinstance(ci_low, (int, float)) or not isinstance(ci_high, (int, float)):
+        return None, None
+    return float(ci_low), float(ci_high)
+
+
+def _auto_games_per_cand(
+    base_games: int,
+    ci_low: float | None,
+    ci_high: float | None,
+    min_games: int,
+    max_games: int,
+    target_ci: float,
+) -> tuple[int, float | None]:
+    base_games = _clamp_int(base_games, min_games, max_games)
+    if ci_low is None or ci_high is None:
+        return base_games, None
+    width = float(ci_high) - float(ci_low)
+    if width <= 0 or target_ci <= 0:
+        return base_games, width
+    scale = width / target_ci
+    next_games = _clamp_int(int(round(base_games * scale * scale)), min_games, max_games)
+    return next_games, width
+
+
 def _cycle_status_path(cycle_dir: Path) -> Path:
     return cycle_dir / "status.json"
 
@@ -577,6 +625,10 @@ def run_autoevolve(
     population: int,
     elite: int,
     games_per_cand: int,
+    auto_games_per_cand: bool,
+    games_per_cand_min: int,
+    games_per_cand_max: int,
+    games_per_cand_target_ci: float,
     epoch_iters: int,
     plateau_epochs: int,
     eps_winrate: float,
@@ -591,6 +643,12 @@ def run_autoevolve(
 ) -> None:
     if bench_max_games < min_progress_games:
         raise ValueError("bench_max_games должен быть >= min_progress_games")
+    if int(games_per_cand_min) <= 0:
+        raise ValueError("games_per_cand_min должен быть >= 1")
+    if int(games_per_cand_max) < int(games_per_cand_min):
+        raise ValueError("games_per_cand_max должен быть >= games_per_cand_min")
+    if auto_games_per_cand and float(games_per_cand_target_ci) <= 0:
+        raise ValueError("games_per_cand_target_ci должен быть > 0 при авто-режиме")
     runs_dir.mkdir(parents=True, exist_ok=True)
     status_path = _status_path(runs_dir)
 
@@ -618,6 +676,11 @@ def run_autoevolve(
             "population": int(population),
             "elite": int(elite),
             "games_per_cand": int(games_per_cand),
+            "auto_games_per_cand": bool(auto_games_per_cand),
+            "games_per_cand_min": int(games_per_cand_min),
+            "games_per_cand_max": int(games_per_cand_max),
+            "games_per_cand_target_ci": float(games_per_cand_target_ci),
+            "games_per_cand_current": int(status.get("games_per_cand_current", games_per_cand) or games_per_cand),
             "epoch_iters": int(epoch_iters),
             "plateau_epochs": int(plateau_epochs),
             "eps_winrate": float(eps_winrate),
@@ -729,6 +792,17 @@ def run_autoevolve(
                 top1_fitness=float(status.get("prev_top1_fitness", float("-inf"))),
                 mean_fitness=float(status.get("prev_topk_mean", float("-inf"))),
             )
+            cycle_games_per_cand = int(
+                status.get("cycle_games_per_cand")
+                or status.get("games_per_cand_current")
+                or games_per_cand
+            )
+            if auto_games_per_cand:
+                cycle_games_per_cand = _clamp_int(
+                    cycle_games_per_cand,
+                    int(games_per_cand_min),
+                    int(games_per_cand_max),
+                )
         else:
             cycle_index = current_cycle + 1
             cycle_dir = runs_dir / f"cycle_{cycle_index:03d}"
@@ -746,6 +820,20 @@ def run_autoevolve(
                 rng = random.Random(pool_snapshot_seed)
                 pool_snapshot = _snapshot_pool(items, rng, top_k_pool, league_cap)
 
+            prev_games = int(status.get("games_per_cand_current") or games_per_cand)
+            cycle_games_per_cand = prev_games
+            prev_ci_width = None
+            if auto_games_per_cand:
+                ci_low, ci_high = _load_prev_bench_ci(runs_dir, current_cycle)
+                cycle_games_per_cand, prev_ci_width = _auto_games_per_cand(
+                    base_games=prev_games,
+                    ci_low=ci_low,
+                    ci_high=ci_high,
+                    min_games=int(games_per_cand_min),
+                    max_games=int(games_per_cand_max),
+                    target_ci=float(games_per_cand_target_ci),
+                )
+
             status.update(
                 {
                     "current_cycle": cycle_index,
@@ -755,6 +843,10 @@ def run_autoevolve(
                     "league_size": league_size,
                     "cycle_seed": cycle_seed,
                     "pool_snapshot_seed": pool_snapshot_seed,
+                    "games_per_cand_prev": int(prev_games),
+                    "games_per_cand_prev_ci_width": prev_ci_width,
+                    "games_per_cand_current": int(cycle_games_per_cand),
+                    "cycle_games_per_cand": int(cycle_games_per_cand),
                     "prev_topk_hashes": sorted(prev_topk.hashes),
                     "prev_top1_fitness": prev_topk.top1_fitness,
                     "prev_topk_mean": prev_topk.mean_fitness,
@@ -766,7 +858,7 @@ def run_autoevolve(
                 cycle_index=cycle_index,
                 master_seed=int(seed),
                 cycle_seed=int(cycle_seed),
-                games_per_cand=int(games_per_cand),
+                games_per_cand=int(cycle_games_per_cand),
                 pool_snapshot_seed=int(pool_snapshot_seed),
                 bench_seed_source=bench_seed_source,
             )
@@ -790,6 +882,8 @@ def run_autoevolve(
                 "current_phase": "training",
                 "cycle_seed": cycle_seed,
                 "pool_snapshot_seed": pool_snapshot_seed,
+                "games_per_cand_current": int(cycle_games_per_cand),
+                "cycle_games_per_cand": int(cycle_games_per_cand),
             }
         )
         _write_status(status_path, status)
@@ -808,7 +902,7 @@ def run_autoevolve(
             max_steps=max_steps,
             population=population,
             elite=elite,
-            games_per_cand=games_per_cand,
+            games_per_cand=cycle_games_per_cand,
             opponents="league",
             baseline_path=baseline_path,
             league_dir=league_dir,
@@ -848,7 +942,7 @@ def run_autoevolve(
         opponents_source = "baseline" if bootstrap else "league_snapshot"
         entry_eval_protocol = _build_training_eval_protocol(
             players=6,
-            games_per_cand=int(games_per_cand),
+            games_per_cand=int(cycle_games_per_cand),
             max_steps=int(max_steps),
             cand_seats="rotate",
             master_seed=int(seed),
@@ -988,6 +1082,10 @@ def build_parser() -> argparse.ArgumentParser:
     run_parser.add_argument("--population", type=int, default=48)
     run_parser.add_argument("--elite", type=int, default=12)
     run_parser.add_argument("--games-per-cand", type=int, default=20)
+    run_parser.add_argument("--auto-games-per-cand", type=_parse_bool, default=False)
+    run_parser.add_argument("--games-per-cand-min", type=int, default=DEFAULT_GAMES_PER_CAND_MIN)
+    run_parser.add_argument("--games-per-cand-max", type=int, default=DEFAULT_GAMES_PER_CAND_MAX)
+    run_parser.add_argument("--games-per-cand-target-ci", type=float, default=DEFAULT_GAMES_PER_CAND_TARGET_CI)
     run_parser.add_argument("--epoch-iters", type=int, default=10)
     run_parser.add_argument("--plateau-epochs", type=int, default=10)
     run_parser.add_argument("--eps-winrate", type=float, default=0.01)
@@ -1029,6 +1127,10 @@ def main(argv: list[str] | None = None) -> None:
         population=args.population,
         elite=args.elite,
         games_per_cand=args.games_per_cand,
+        auto_games_per_cand=bool(args.auto_games_per_cand),
+        games_per_cand_min=args.games_per_cand_min,
+        games_per_cand_max=args.games_per_cand_max,
+        games_per_cand_target_ci=args.games_per_cand_target_ci,
         epoch_iters=args.epoch_iters,
         plateau_epochs=args.plateau_epochs,
         eps_winrate=args.eps_winrate,

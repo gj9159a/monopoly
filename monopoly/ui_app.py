@@ -987,6 +987,10 @@ def _start_autoevolve(
     bench_max_games: int,
     plateau_delta: float,
     games_per_cand: int,
+    auto_games_per_cand: bool,
+    games_per_cand_min: int,
+    games_per_cand_max: int,
+    games_per_cand_target_ci: float,
     max_steps: int,
     seed: int,
     top_k_pool: int,
@@ -1031,6 +1035,14 @@ def _start_autoevolve(
         str(plateau_delta),
         "--games-per-cand",
         str(games_per_cand),
+        "--auto-games-per-cand",
+        str(auto_games_per_cand).lower(),
+        "--games-per-cand-min",
+        str(games_per_cand_min),
+        "--games-per-cand-max",
+        str(games_per_cand_max),
+        "--games-per-cand-target-ci",
+        str(games_per_cand_target_ci),
         "--max-steps",
         str(max_steps),
         "--seed",
@@ -1357,7 +1369,31 @@ def render_training_mode() -> None:
             workers = st.number_input("Workers", min_value=1, value=_default_workers(), step=1)
             population = st.number_input("Population", min_value=4, value=64, step=1)
             elite = st.number_input("Elite", min_value=1, value=16, step=1)
-            games_per_cand = st.number_input("Games per candidate", min_value=1, value=32, step=1)
+            auto_games_per_cand = st.checkbox("Авто games per candidate", value=False)
+            games_label = "Games per candidate (стартовое)" if auto_games_per_cand else "Games per candidate"
+            games_per_cand = st.number_input(games_label, min_value=1, value=16, step=1)
+            games_per_cand_min = 8
+            games_per_cand_max = 64
+            games_per_cand_target_ci = 0.20
+            if auto_games_per_cand:
+                games_per_cand_min = st.number_input("Games per candidate min", min_value=1, value=8, step=1)
+                games_per_cand_max = st.number_input(
+                    "Games per candidate max",
+                    min_value=int(games_per_cand_min),
+                    value=64,
+                    step=1,
+                )
+                games_per_cand_target_ci = st.number_input(
+                    "Target win-rate CI width",
+                    min_value=0.01,
+                    max_value=1.0,
+                    value=0.20,
+                    step=0.01,
+                    format="%.2f",
+                )
+                if not (games_per_cand_min <= games_per_cand <= games_per_cand_max):
+                    st.warning("Стартовое Games per candidate вне диапазона min/max; будет приведено к границам.")
+                st.caption("Авто использует ширину CI win-rate из предыдущего цикла (last_bench.json).")
             league_rebench_games = st.number_input(
                 "Games for re-benchmark",
                 min_value=10,
@@ -1421,6 +1457,10 @@ def render_training_mode() -> None:
                 bench_max_games=int(bench_max_games),
                 plateau_delta=float(plateau_delta),
                 games_per_cand=int(games_per_cand),
+                auto_games_per_cand=bool(auto_games_per_cand),
+                games_per_cand_min=int(games_per_cand_min),
+                games_per_cand_max=int(games_per_cand_max),
+                games_per_cand_target_ci=float(games_per_cand_target_ci),
                 max_steps=int(max_steps),
                 seed=int(seed),
                 top_k_pool=int(top_k_pool),
@@ -1456,6 +1496,10 @@ def render_training_mode() -> None:
                     bench_max_games=int(bench_max_games),
                     plateau_delta=float(plateau_delta),
                     games_per_cand=int(games_per_cand),
+                    auto_games_per_cand=bool(auto_games_per_cand),
+                    games_per_cand_min=int(games_per_cand_min),
+                    games_per_cand_max=int(games_per_cand_max),
+                    games_per_cand_target_ci=float(games_per_cand_target_ci),
                     max_steps=int(max_steps),
                     seed=int(seed),
                     top_k_pool=int(top_k_pool),
@@ -1530,6 +1574,24 @@ def render_training_mode() -> None:
         col_rb1, col_rb2 = st.columns(2)
         col_rb1.metric("Re-benchmark needed", "Да" if rebench_needed else "Нет")
         col_rb2.metric("Re-benchmark done", "Да" if rebench_done else "Нет")
+
+        auto_games = bool(meta_status.get("auto_games_per_cand", False))
+        games_current = int(
+            meta_status.get("games_per_cand_current")
+            or meta_status.get("games_per_cand", 0)
+            or 0
+        )
+        if auto_games:
+            prev_ci_width = meta_status.get("games_per_cand_prev_ci_width")
+            target_ci = meta_status.get("games_per_cand_target_ci")
+            prev_ci_text = f"{prev_ci_width:.3f}" if isinstance(prev_ci_width, (int, float)) else "—"
+            target_ci_text = f"{float(target_ci):.2f}" if isinstance(target_ci, (int, float)) else "—"
+            st.caption(
+                "Games per candidate (auto): "
+                f"{games_current} | prev CI width: {prev_ci_text} | target CI: {target_ci_text}"
+            )
+        else:
+            st.caption(f"Games per candidate: {games_current}")
 
         if cycle_status:
             col9, col10, col11, col12 = st.columns(4)
