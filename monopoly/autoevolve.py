@@ -625,10 +625,6 @@ def run_autoevolve(
     population: int,
     elite: int,
     games_per_cand: int,
-    auto_games_per_cand: bool,
-    games_per_cand_min: int,
-    games_per_cand_max: int,
-    games_per_cand_target_ci: float,
     epoch_iters: int,
     plateau_epochs: int,
     eps_winrate: float,
@@ -639,6 +635,10 @@ def run_autoevolve(
     max_steps: int,
     workers: int,
     resume: bool,
+    auto_games_per_cand: bool = False,
+    games_per_cand_min: int = DEFAULT_GAMES_PER_CAND_MIN,
+    games_per_cand_max: int = DEFAULT_GAMES_PER_CAND_MAX,
+    games_per_cand_target_ci: float = DEFAULT_GAMES_PER_CAND_TARGET_CI,
     eps_improvement: float = DEFAULT_EPS_IMPROVEMENT,
 ) -> None:
     if bench_max_games < min_progress_games:
