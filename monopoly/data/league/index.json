@@ -1,0 +1,1022 @@
+{
+  "items": [
+    {
+      "advantage": 0.10944146458984226,
+      "bench_timestamp": "2026-01-30T07:49:44+00:00",
+      "created_at": "2026-01-28T08:46:56+00:00",
+      "cutoff_rate": 0.16015625,
+      "eval_protocol": {
+        "advantage_scale": 1000.0,
+        "cutoff_outcome_policy": "placement_mapping",
+        "eval_seeds_policy": {
+          "mode": "seed + idx",
+          "seed_source": "league_rebench_seed"
+        },
+        "fitness_coeffs": {
+          "advantage": 1.0,
+          "avg_steps_norm": -100.0,
+          "cutoff_rate": -100.0,
+          "place_score": 10.0,
+          "win_lcb": 1000.0
+        },
+        "fitness_confidence": 0.8,
+        "games_per_cand": 256,
+        "league_rebench_seed": 1203,
+        "max_steps": 2048,
+        "opponent_sampling_policy": {
+          "exclude_self": true,
+          "fallback_if_empty": "baseline",
+          "pool_fixed": true,
+          "pool_size": 16,
+          "pool_size_effective": "min(league_cap, league_size)",
+          "source": "league_topk_selfplay"
+        },
+        "place_to_score": {
+          "1": 1.0,
+          "2": 0.6,
+          "3": 0.3,
+          "4": 0.1,
+          "5": 0.0,
+          "6": 0.0
+        },
+        "players": 6,
+        "protocol_kind": "league_rebench",
+        "scoring_version": "score_v2",
+        "seat_rotation_policy": {
+          "mode": "rotate",
+          "seed_source": "league_rebench_seed",
+          "start": "seed % players"
+        }
+      },
+      "eval_protocol_hash": "559c753f8819074948a8acd538c7ce862967dd457cc4814a219c71d05daa8555",
+      "fitness": 449.50710849694093,
+      "hash": "870ed4d8094b5cbc6706314c9589f029f71940e23a6ce8b4d737d82cdeeadb27",
+      "meta": {
+        "name": "best_20260128_134656_c004",
+        "note": "cycle=4; best_fitness=746.653151"
+      },
+      "name": "best_20260128_134656_c004",
+      "params_hash": "870ed4d8094b5cbc6706314c9589f029f71940e23a6ce8b4d737d82cdeeadb27",
+      "path": "best_20260128_134656_c004.json",
+      "place_score": 0.6125,
+      "rank": 1,
+      "source_cycle": 4,
+      "source_run_id": "20260128-062056",
+      "win_lcb": 0.49628074656115967,
+      "win_rate": 0.5363281249999998,
+      "win_rate_ci_high": 0.5759123468390314,
+      "win_rate_ci_low": 0.49628074656115967
+    },
+    {
+      "advantage": 0.14180060647869078,
+      "bench_timestamp": "2026-01-30T07:49:44+00:00",
+      "created_at": "2026-01-29T06:03:28+00:00",
+      "cutoff_rate": 0.171875,
+      "eval_protocol": {
+        "advantage_scale": 1000.0,
+        "cutoff_outcome_policy": "placement_mapping",
+        "eval_seeds_policy": {
+          "mode": "seed + idx",
+          "seed_source": "league_rebench_seed"
+        },
+        "fitness_coeffs": {
+          "advantage": 1.0,
+          "avg_steps_norm": -100.0,
+          "cutoff_rate": -100.0,
+          "place_score": 10.0,
+          "win_lcb": 1000.0
+        },
+        "fitness_confidence": 0.8,
+        "games_per_cand": 256,
+        "league_rebench_seed": 1203,
+        "max_steps": 2048,
+        "opponent_sampling_policy": {
+          "exclude_self": true,
+          "fallback_if_empty": "baseline",
+          "pool_fixed": true,
+          "pool_size": 16,
+          "pool_size_effective": "min(league_cap, league_size)",
+          "source": "league_topk_selfplay"
+        },
+        "place_to_score": {
+          "1": 1.0,
+          "2": 0.6,
+          "3": 0.3,
+          "4": 0.1,
+          "5": 0.0,
+          "6": 0.0
+        },
+        "players": 6,
+        "protocol_kind": "league_rebench",
+        "scoring_version": "score_v2",
+        "seat_rotation_policy": {
+          "mode": "rotate",
+          "seed_source": "league_rebench_seed",
+          "start": "seed % players"
+        }
+      },
+      "eval_protocol_hash": "559c753f8819074948a8acd538c7ce862967dd457cc4814a219c71d05daa8555",
+      "fitness": 428.2510869884824,
+      "hash": "550a87a4b7ef32ba1c4e298240d04eb95c95e9713e854c599ef182d6476a891e",
+      "meta": {
+        "name": "best_20260129_110328_c011",
+        "note": "cycle=11; best_fitness=773.844880"
+      },
+      "name": "best_20260129_110328_c011",
+      "params_hash": "550a87a4b7ef32ba1c4e298240d04eb95c95e9713e854c599ef182d6476a891e",
+      "path": "best_20260129_110328_c011.json",
+      "place_score": 0.610546875,
+      "rank": 2,
+      "source_cycle": 11,
+      "source_run_id": "20260129-023640",
+      "win_lcb": 0.47718074329118343,
+      "win_rate": 0.5171874999999998,
+      "win_rate_ci_high": 0.5569751288551432,
+      "win_rate_ci_low": 0.47718074329118343
+    },
+    {
+      "advantage": -0.08426090778572573,
+      "bench_timestamp": "2026-01-30T07:49:44+00:00",
+      "created_at": "2026-01-28T01:00:38+00:00",
+      "cutoff_rate": 0.2578125,
+      "eval_protocol": {
+        "advantage_scale": 1000.0,
+        "cutoff_outcome_policy": "placement_mapping",
+        "eval_seeds_policy": {
+          "mode": "seed + idx",
+          "seed_source": "league_rebench_seed"
+        },
+        "fitness_coeffs": {
+          "advantage": 1.0,
+          "avg_steps_norm": -100.0,
+          "cutoff_rate": -100.0,
+          "place_score": 10.0,
+          "win_lcb": 1000.0
+        },
+        "fitness_confidence": 0.8,
+        "games_per_cand": 256,
+        "league_rebench_seed": 1203,
+        "max_steps": 2048,
+        "opponent_sampling_policy": {
+          "exclude_self": true,
+          "fallback_if_empty": "baseline",
+          "pool_fixed": true,
+          "pool_size": 16,
+          "pool_size_effective": "min(league_cap, league_size)",
+          "source": "league_topk_selfplay"
+        },
+        "place_to_score": {
+          "1": 1.0,
+          "2": 0.6,
+          "3": 0.3,
+          "4": 0.1,
+          "5": 0.0,
+          "6": 0.0
+        },
+        "players": 6,
+        "protocol_kind": "league_rebench",
+        "scoring_version": "score_v2",
+        "seat_rotation_policy": {
+          "mode": "rotate",
+          "seed_source": "league_rebench_seed",
+          "start": "seed % players"
+        }
+      },
+      "eval_protocol_hash": "559c753f8819074948a8acd538c7ce862967dd457cc4814a219c71d05daa8555",
+      "fitness": 294.9478379908041,
+      "hash": "9a44116f8e0e9861471c8dd66e429fe1197064d58d4f8dc4574622eeaa5565be",
+      "meta": {
+        "source_cycle": "cycle_001",
+        "source_run": "20260128-040735"
+      },
+      "name": "bot_13664c75",
+      "params_hash": "9a44116f8e0e9861471c8dd66e429fe1197064d58d4f8dc4574622eeaa5565be",
+      "path": "bot_13664c75.json",
+      "place_score": 0.49921875,
+      "rank": 3,
+      "win_lcb": 0.35999115956753514,
+      "win_rate": 0.3984374999999997,
+      "win_rate_ci_high": 0.4381786868405312,
+      "win_rate_ci_low": 0.35999115956753514
+    },
+    {
+      "bench_timestamp": "2026-01-30T09:23:43+00:00",
+      "created_at": "2026-01-30T09:23:43+00:00",
+      "eval_protocol_hash": "unknown",
+      "fitness": 239.68850211153995,
+      "hash": "c54c14f7a06046f7a92f95099a3d42d1bc45e9fb2487909e70aff9d09ec94f39",
+      "meta": {
+        "source_cycle": "cycle_001",
+        "source_run": "20260130-120426"
+      },
+      "name": "bot_c54c14f7",
+      "params_hash": "c54c14f7a06046f7a92f95099a3d42d1bc45e9fb2487909e70aff9d09ec94f39",
+      "path": "bot_c54c14f7.json",
+      "rank": 4
+    },
+    {
+      "advantage": -0.34596048570315885,
+      "bench_timestamp": "2026-01-30T07:49:44+00:00",
+      "created_at": "2026-01-28T04:02:16+00:00",
+      "cutoff_rate": 0.20703125,
+      "eval_protocol": {
+        "advantage_scale": 1000.0,
+        "cutoff_outcome_policy": "placement_mapping",
+        "eval_seeds_policy": {
+          "mode": "seed + idx",
+          "seed_source": "league_rebench_seed"
+        },
+        "fitness_coeffs": {
+          "advantage": 1.0,
+          "avg_steps_norm": -100.0,
+          "cutoff_rate": -100.0,
+          "place_score": 10.0,
+          "win_lcb": 1000.0
+        },
+        "fitness_confidence": 0.8,
+        "games_per_cand": 256,
+        "league_rebench_seed": 1203,
+        "max_steps": 2048,
+        "opponent_sampling_policy": {
+          "exclude_self": true,
+          "fallback_if_empty": "baseline",
+          "pool_fixed": true,
+          "pool_size": 16,
+          "pool_size_effective": "min(league_cap, league_size)",
+          "source": "league_topk_selfplay"
+        },
+        "place_to_score": {
+          "1": 1.0,
+          "2": 0.6,
+          "3": 0.3,
+          "4": 0.1,
+          "5": 0.0,
+          "6": 0.0
+        },
+        "players": 6,
+        "protocol_kind": "league_rebench",
+        "scoring_version": "score_v2",
+        "seat_rotation_policy": {
+          "mode": "rotate",
+          "seed_source": "league_rebench_seed",
+          "start": "seed % players"
+        }
+      },
+      "eval_protocol_hash": "559c753f8819074948a8acd538c7ce862967dd457cc4814a219c71d05daa8555",
+      "fitness": 202.20536902890967,
+      "hash": "8de07a9b95b6b1e2483d1748ad20520be9d54bafb6a7927772ba6242c4c6b881",
+      "meta": {
+        "name": "best_20260128_090216_c001",
+        "note": "cycle=1; best_fitness=804.801386"
+      },
+      "name": "best_20260128_090216_c001",
+      "params_hash": "8de07a9b95b6b1e2483d1748ad20520be9d54bafb6a7927772ba6242c4c6b881",
+      "path": "best_20260128_090216_c001.json",
+      "place_score": 0.417578125,
+      "rank": 5,
+      "source_cycle": 1,
+      "source_run_id": "20260128-062056",
+      "win_lcb": 0.2605459584208628,
+      "win_rate": 0.295703125,
+      "win_rate_ci_high": 0.3334649249307488,
+      "win_rate_ci_low": 0.2605459584208628
+    },
+    {
+      "advantage": -0.3676376367865087,
+      "bench_timestamp": "2026-01-30T07:49:44+00:00",
+      "created_at": "2026-01-28T12:14:00+00:00",
+      "cutoff_rate": 0.21875,
+      "eval_protocol": {
+        "advantage_scale": 1000.0,
+        "cutoff_outcome_policy": "placement_mapping",
+        "eval_seeds_policy": {
+          "mode": "seed + idx",
+          "seed_source": "league_rebench_seed"
+        },
+        "fitness_coeffs": {
+          "advantage": 1.0,
+          "avg_steps_norm": -100.0,
+          "cutoff_rate": -100.0,
+          "place_score": 10.0,
+          "win_lcb": 1000.0
+        },
+        "fitness_confidence": 0.8,
+        "games_per_cand": 256,
+        "league_rebench_seed": 1203,
+        "max_steps": 2048,
+        "opponent_sampling_policy": {
+          "exclude_self": true,
+          "fallback_if_empty": "baseline",
+          "pool_fixed": true,
+          "pool_size": 16,
+          "pool_size_effective": "min(league_cap, league_size)",
+          "source": "league_topk_selfplay"
+        },
+        "place_to_score": {
+          "1": 1.0,
+          "2": 0.6,
+          "3": 0.3,
+          "4": 0.1,
+          "5": 0.0,
+          "6": 0.0
+        },
+        "players": 6,
+        "protocol_kind": "league_rebench",
+        "scoring_version": "score_v2",
+        "seat_rotation_policy": {
+          "mode": "rotate",
+          "seed_source": "league_rebench_seed",
+          "start": "seed % players"
+        }
+      },
+      "eval_protocol_hash": "559c753f8819074948a8acd538c7ce862967dd457cc4814a219c71d05daa8555",
+      "fitness": 176.87611812231577,
+      "hash": "f0ecb37eb20797618778b53f3043fe01732c6dff489d325bc431ea2d8085a7a3",
+      "meta": {
+        "name": "best_20260128_171400_c006",
+        "note": "cycle=6; best_fitness=515.530089"
+      },
+      "name": "best_20260128_171400_c006",
+      "params_hash": "f0ecb37eb20797618778b53f3043fe01732c6dff489d325bc431ea2d8085a7a3",
+      "path": "best_20260128_171400_c006.json",
+      "place_score": 0.383984375,
+      "rank": 6,
+      "source_cycle": 6,
+      "source_run_id": "20260128-062056",
+      "win_lcb": 0.23852060359845775,
+      "win_rate": 0.27265624999999993,
+      "win_rate_ci_high": 0.30969036028421504,
+      "win_rate_ci_low": 0.23852060359845775
+    },
+    {
+      "advantage": -0.3773929384966938,
+      "bench_timestamp": "2026-01-30T07:49:44+00:00",
+      "created_at": "2026-01-28T21:35:38+00:00",
+      "cutoff_rate": 0.27734375,
+      "eval_protocol": {
+        "advantage_scale": 1000.0,
+        "cutoff_outcome_policy": "placement_mapping",
+        "eval_seeds_policy": {
+          "mode": "seed + idx",
+          "seed_source": "league_rebench_seed"
+        },
+        "fitness_coeffs": {
+          "advantage": 1.0,
+          "avg_steps_norm": -100.0,
+          "cutoff_rate": -100.0,
+          "place_score": 10.0,
+          "win_lcb": 1000.0
+        },
+        "fitness_confidence": 0.8,
+        "games_per_cand": 256,
+        "league_rebench_seed": 1203,
+        "max_steps": 2048,
+        "opponent_sampling_policy": {
+          "exclude_self": true,
+          "fallback_if_empty": "baseline",
+          "pool_fixed": true,
+          "pool_size": 16,
+          "pool_size_effective": "min(league_cap, league_size)",
+          "source": "league_topk_selfplay"
+        },
+        "place_to_score": {
+          "1": 1.0,
+          "2": 0.6,
+          "3": 0.3,
+          "4": 0.1,
+          "5": 0.0,
+          "6": 0.0
+        },
+        "players": 6,
+        "protocol_kind": "league_rebench",
+        "scoring_version": "score_v2",
+        "seat_rotation_policy": {
+          "mode": "rotate",
+          "seed_source": "league_rebench_seed",
+          "start": "seed % players"
+        }
+      },
+      "eval_protocol_hash": "559c753f8819074948a8acd538c7ce862967dd457cc4814a219c71d05daa8555",
+      "fitness": 162.63501303207693,
+      "hash": "7cbaf4e3fc020985684cfe1b9ee6ca6c0baf7b59bb498f65a0b12cf6c9f4adc3",
+      "meta": {
+        "source_cycle": "cycle_001",
+        "source_run": "20260128-234408"
+      },
+      "name": "bot_8523f187",
+      "params_hash": "7cbaf4e3fc020985684cfe1b9ee6ca6c0baf7b59bb498f65a0b12cf6c9f4adc3",
+      "path": "bot_8523f187.json",
+      "place_score": 0.3734375,
+      "rank": 7,
+      "win_lcb": 0.23331138668346424,
+      "win_rate": 0.2671875,
+      "win_rate_ci_high": 0.3040317996981047,
+      "win_rate_ci_low": 0.23331138668346424
+    },
+    {
+      "advantage": -0.37627046762630734,
+      "bench_timestamp": "2026-01-30T07:49:44+00:00",
+      "created_at": "2026-01-30T04:08:02+00:00",
+      "cutoff_rate": 0.23828125,
+      "eval_protocol": {
+        "advantage_scale": 1000.0,
+        "cutoff_outcome_policy": "placement_mapping",
+        "eval_seeds_policy": {
+          "mode": "seed + idx",
+          "seed_source": "league_rebench_seed"
+        },
+        "fitness_coeffs": {
+          "advantage": 1.0,
+          "avg_steps_norm": -100.0,
+          "cutoff_rate": -100.0,
+          "place_score": 10.0,
+          "win_lcb": 1000.0
+        },
+        "fitness_confidence": 0.8,
+        "games_per_cand": 256,
+        "league_rebench_seed": 1203,
+        "max_steps": 2048,
+        "opponent_sampling_policy": {
+          "exclude_self": true,
+          "fallback_if_empty": "baseline",
+          "pool_fixed": true,
+          "pool_size": 16,
+          "pool_size_effective": "min(league_cap, league_size)",
+          "source": "league_topk_selfplay"
+        },
+        "place_to_score": {
+          "1": 1.0,
+          "2": 0.6,
+          "3": 0.3,
+          "4": 0.1,
+          "5": 0.0,
+          "6": 0.0
+        },
+        "players": 6,
+        "protocol_kind": "league_rebench",
+        "scoring_version": "score_v2",
+        "seat_rotation_policy": {
+          "mode": "rotate",
+          "seed_source": "league_rebench_seed",
+          "start": "seed % players"
+        }
+      },
+      "eval_protocol_hash": "559c753f8819074948a8acd538c7ce862967dd457cc4814a219c71d05daa8555",
+      "fitness": 152.20053066230898,
+      "hash": "d94caacb832cef6e137ab2c933d13b719a5e04e2e5d528904107b9a98c0c5b22",
+      "meta": {
+        "name": "best_20260130_090802_c003",
+        "note": "cycle=3; best_fitness=469.688485"
+      },
+      "name": "best_20260130_090802_c003",
+      "params_hash": "d94caacb832cef6e137ab2c933d13b719a5e04e2e5d528904107b9a98c0c5b22",
+      "path": "best_20260130_090802_c003.json",
+      "place_score": 0.3765625,
+      "rank": 8,
+      "source_cycle": 3,
+      "source_run_id": "20260130-045558",
+      "win_lcb": 0.21809561521684936,
+      "win_rate": 0.251171875,
+      "win_rate_ci_high": 0.28742050848291467,
+      "win_rate_ci_low": 0.21809561521684936
+    },
+    {
+      "advantage": -0.38614711202926005,
+      "bench_timestamp": "2026-01-30T07:49:44+00:00",
+      "created_at": "2026-01-29T01:47:56+00:00",
+      "cutoff_rate": 0.26171875,
+      "eval_protocol": {
+        "advantage_scale": 1000.0,
+        "cutoff_outcome_policy": "placement_mapping",
+        "eval_seeds_policy": {
+          "mode": "seed + idx",
+          "seed_source": "league_rebench_seed"
+        },
+        "fitness_coeffs": {
+          "advantage": 1.0,
+          "avg_steps_norm": -100.0,
+          "cutoff_rate": -100.0,
+          "place_score": 10.0,
+          "win_lcb": 1000.0
+        },
+        "fitness_confidence": 0.8,
+        "games_per_cand": 256,
+        "league_rebench_seed": 1203,
+        "max_steps": 2048,
+        "opponent_sampling_policy": {
+          "exclude_self": true,
+          "fallback_if_empty": "baseline",
+          "pool_fixed": true,
+          "pool_size": 16,
+          "pool_size_effective": "min(league_cap, league_size)",
+          "source": "league_topk_selfplay"
+        },
+        "place_to_score": {
+          "1": 1.0,
+          "2": 0.6,
+          "3": 0.3,
+          "4": 0.1,
+          "5": 0.0,
+          "6": 0.0
+        },
+        "players": 6,
+        "protocol_kind": "league_rebench",
+        "scoring_version": "score_v2",
+        "seat_rotation_policy": {
+          "mode": "rotate",
+          "seed_source": "league_rebench_seed",
+          "start": "seed % players"
+        }
+      },
+      "eval_protocol_hash": "559c753f8819074948a8acd538c7ce862967dd457cc4814a219c71d05daa8555",
+      "fitness": 140.9730404508448,
+      "hash": "db99368e1cf4503cb05eaadbf06f703d2764c1ab46947f7f4d8d5360251f1680",
+      "meta": {
+        "name": "best_20260129_064756_c008",
+        "note": "cycle=8; best_fitness=377.223041"
+      },
+      "name": "best_20260129_064756_c008",
+      "params_hash": "db99368e1cf4503cb05eaadbf06f703d2764c1ab46947f7f4d8d5360251f1680",
+      "path": "best_20260129_064756_c008.json",
+      "place_score": 0.355078125,
+      "rank": 9,
+      "source_cycle": 8,
+      "source_run_id": "20260129-023640",
+      "win_lcb": 0.20884798761170217,
+      "win_rate": 0.24140625000000007,
+      "win_rate_ci_high": 0.2772613905503762,
+      "win_rate_ci_low": 0.20884798761170217
+    },
+    {
+      "advantage": -0.5678552894134818,
+      "bench_timestamp": "2026-01-30T07:49:44+00:00",
+      "created_at": "2026-01-28T10:11:08+00:00",
+      "cutoff_rate": 0.234375,
+      "eval_protocol": {
+        "advantage_scale": 1000.0,
+        "cutoff_outcome_policy": "placement_mapping",
+        "eval_seeds_policy": {
+          "mode": "seed + idx",
+          "seed_source": "league_rebench_seed"
+        },
+        "fitness_coeffs": {
+          "advantage": 1.0,
+          "avg_steps_norm": -100.0,
+          "cutoff_rate": -100.0,
+          "place_score": 10.0,
+          "win_lcb": 1000.0
+        },
+        "fitness_confidence": 0.8,
+        "games_per_cand": 256,
+        "league_rebench_seed": 1203,
+        "max_steps": 2048,
+        "opponent_sampling_policy": {
+          "exclude_self": true,
+          "fallback_if_empty": "baseline",
+          "pool_fixed": true,
+          "pool_size": 16,
+          "pool_size_effective": "min(league_cap, league_size)",
+          "source": "league_topk_selfplay"
+        },
+        "place_to_score": {
+          "1": 1.0,
+          "2": 0.6,
+          "3": 0.3,
+          "4": 0.1,
+          "5": 0.0,
+          "6": 0.0
+        },
+        "players": 6,
+        "protocol_kind": "league_rebench",
+        "scoring_version": "score_v2",
+        "seat_rotation_policy": {
+          "mode": "rotate",
+          "seed_source": "league_rebench_seed",
+          "start": "seed % players"
+        }
+      },
+      "eval_protocol_hash": "559c753f8819074948a8acd538c7ce862967dd457cc4814a219c71d05daa8555",
+      "fitness": 76.03844647921741,
+      "hash": "209eb46b736d5a62f9268bade6b91f55ec0a6c81fdf7393a5f009b5e93c7e498",
+      "meta": {
+        "name": "best_20260128_151108_c005",
+        "note": "cycle=5; best_fitness=329.954263"
+      },
+      "name": "best_20260128_151108_c005",
+      "params_hash": "209eb46b736d5a62f9268bade6b91f55ec0a6c81fdf7393a5f009b5e93c7e498",
+      "path": "best_20260128_151108_c005.json",
+      "place_score": 0.3,
+      "rank": 10,
+      "source_cycle": 5,
+      "source_run_id": "20260128-062056",
+      "win_lcb": 0.1405233397324981,
+      "win_rate": 0.16835937500000003,
+      "win_rate_ci_high": 0.2004235818076899,
+      "win_rate_ci_low": 0.1405233397324981
+    },
+    {
+      "advantage": -0.7301018589708452,
+      "bench_timestamp": "2026-01-30T07:49:44+00:00",
+      "created_at": "2026-01-30T05:15:42+00:00",
+      "cutoff_rate": 0.15234375,
+      "eval_protocol": {
+        "advantage_scale": 1000.0,
+        "cutoff_outcome_policy": "placement_mapping",
+        "eval_seeds_policy": {
+          "mode": "seed + idx",
+          "seed_source": "league_rebench_seed"
+        },
+        "fitness_coeffs": {
+          "advantage": 1.0,
+          "avg_steps_norm": -100.0,
+          "cutoff_rate": -100.0,
+          "place_score": 10.0,
+          "win_lcb": 1000.0
+        },
+        "fitness_confidence": 0.8,
+        "games_per_cand": 256,
+        "league_rebench_seed": 1203,
+        "max_steps": 2048,
+        "opponent_sampling_policy": {
+          "exclude_self": true,
+          "fallback_if_empty": "baseline",
+          "pool_fixed": true,
+          "pool_size": 16,
+          "pool_size_effective": "min(league_cap, league_size)",
+          "source": "league_topk_selfplay"
+        },
+        "place_to_score": {
+          "1": 1.0,
+          "2": 0.6,
+          "3": 0.3,
+          "4": 0.1,
+          "5": 0.0,
+          "6": 0.0
+        },
+        "players": 6,
+        "protocol_kind": "league_rebench",
+        "scoring_version": "score_v2",
+        "seat_rotation_policy": {
+          "mode": "rotate",
+          "seed_source": "league_rebench_seed",
+          "start": "seed % players"
+        }
+      },
+      "eval_protocol_hash": "559c753f8819074948a8acd538c7ce862967dd457cc4814a219c71d05daa8555",
+      "fitness": 40.41666149581812,
+      "hash": "0dfad360027d15547bfefb07698ba79b580f9fa556ea7943ec6ebb8527e68389",
+      "meta": {
+        "name": "best_20260130_101542_c006",
+        "note": "cycle=6; best_fitness=189.211974"
+      },
+      "name": "best_20260130_101542_c006",
+      "params_hash": "0dfad360027d15547bfefb07698ba79b580f9fa556ea7943ec6ebb8527e68389",
+      "path": "best_20260130_101542_c006.json",
+      "place_score": 0.258203125,
+      "rank": 11,
+      "source_cycle": 6,
+      "source_run_id": "20260130-045558",
+      "win_lcb": 0.08997159245635146,
+      "win_rate": 0.11289062500000004,
+      "win_rate_ci_high": 0.14074501442978082,
+      "win_rate_ci_low": 0.08997159245635146
+    },
+    {
+      "advantage": -0.6525859947756436,
+      "bench_timestamp": "2026-01-30T07:49:44+00:00",
+      "created_at": "2026-01-28T06:53:38+00:00",
+      "cutoff_rate": 0.265625,
+      "eval_protocol": {
+        "advantage_scale": 1000.0,
+        "cutoff_outcome_policy": "placement_mapping",
+        "eval_seeds_policy": {
+          "mode": "seed + idx",
+          "seed_source": "league_rebench_seed"
+        },
+        "fitness_coeffs": {
+          "advantage": 1.0,
+          "avg_steps_norm": -100.0,
+          "cutoff_rate": -100.0,
+          "place_score": 10.0,
+          "win_lcb": 1000.0
+        },
+        "fitness_confidence": 0.8,
+        "games_per_cand": 256,
+        "league_rebench_seed": 1203,
+        "max_steps": 2048,
+        "opponent_sampling_policy": {
+          "exclude_self": true,
+          "fallback_if_empty": "baseline",
+          "pool_fixed": true,
+          "pool_size": 16,
+          "pool_size_effective": "min(league_cap, league_size)",
+          "source": "league_topk_selfplay"
+        },
+        "place_to_score": {
+          "1": 1.0,
+          "2": 0.6,
+          "3": 0.3,
+          "4": 0.1,
+          "5": 0.0,
+          "6": 0.0
+        },
+        "players": 6,
+        "protocol_kind": "league_rebench",
+        "scoring_version": "score_v2",
+        "seat_rotation_policy": {
+          "mode": "rotate",
+          "seed_source": "league_rebench_seed",
+          "start": "seed % players"
+        }
+      },
+      "eval_protocol_hash": "559c753f8819074948a8acd538c7ce862967dd457cc4814a219c71d05daa8555",
+      "fitness": 37.969345884859194,
+      "hash": "110c7e727108c1d5174aad4a88c8921a94eeeead283e26ff2c7ec08e37115601",
+      "meta": {
+        "name": "best_20260128_115338_c003",
+        "note": "cycle=3; best_fitness=399.250836"
+      },
+      "name": "best_20260128_115338_c003",
+      "params_hash": "110c7e727108c1d5174aad4a88c8921a94eeeead283e26ff2c7ec08e37115601",
+      "path": "best_20260128_115338_c003.json",
+      "place_score": 0.267578125,
+      "rank": 12,
+      "source_cycle": 3,
+      "source_run_id": "20260128-062056",
+      "win_lcb": 0.10795638164770124,
+      "win_rate": 0.13281250000000006,
+      "win_rate_ci_high": 0.16234998613531026,
+      "win_rate_ci_low": 0.10795638164770124
+    },
+    {
+      "advantage": -0.8424525117432159,
+      "bench_timestamp": "2026-01-30T07:49:44+00:00",
+      "created_at": "2026-01-30T02:14:40+00:00",
+      "cutoff_rate": 0.21484375,
+      "eval_protocol": {
+        "advantage_scale": 1000.0,
+        "cutoff_outcome_policy": "placement_mapping",
+        "eval_seeds_policy": {
+          "mode": "seed + idx",
+          "seed_source": "league_rebench_seed"
+        },
+        "fitness_coeffs": {
+          "advantage": 1.0,
+          "avg_steps_norm": -100.0,
+          "cutoff_rate": -100.0,
+          "place_score": 10.0,
+          "win_lcb": 1000.0
+        },
+        "fitness_confidence": 0.8,
+        "games_per_cand": 256,
+        "league_rebench_seed": 1203,
+        "max_steps": 2048,
+        "opponent_sampling_policy": {
+          "exclude_self": true,
+          "fallback_if_empty": "baseline",
+          "pool_fixed": true,
+          "pool_size": 16,
+          "pool_size_effective": "min(league_cap, league_size)",
+          "source": "league_topk_selfplay"
+        },
+        "place_to_score": {
+          "1": 1.0,
+          "2": 0.6,
+          "3": 0.3,
+          "4": 0.1,
+          "5": 0.0,
+          "6": 0.0
+        },
+        "players": 6,
+        "protocol_kind": "league_rebench",
+        "scoring_version": "score_v2",
+        "seat_rotation_policy": {
+          "mode": "rotate",
+          "seed_source": "league_rebench_seed",
+          "start": "seed % players"
+        }
+      },
+      "eval_protocol_hash": "559c753f8819074948a8acd538c7ce862967dd457cc4814a219c71d05daa8555",
+      "fitness": -20.198467882986435,
+      "hash": "2e3d0f80bb5942165788c54bfa76799ae478b4ec51377a101cbf5e2d71f610c1",
+      "meta": {
+        "name": "best_20260130_071440_c001",
+        "note": "cycle=1; best_fitness=80.605347"
+      },
+      "name": "best_20260130_071440_c001",
+      "params_hash": "2e3d0f80bb5942165788c54bfa76799ae478b4ec51377a101cbf5e2d71f610c1",
+      "path": "best_20260130_071440_c001.json",
+      "place_score": 0.223828125,
+      "rank": 13,
+      "source_cycle": 1,
+      "source_run_id": "20260130-045558",
+      "win_lcb": 0.0398089779148896,
+      "win_rate": 0.05546875000000001,
+      "win_rate_ci_high": 0.07679596520964976,
+      "win_rate_ci_low": 0.0398089779148896
+    },
+    {
+      "advantage": -0.8517625305210315,
+      "bench_timestamp": "2026-01-30T07:49:44+00:00",
+      "created_at": "2026-01-30T02:30:35+00:00",
+      "cutoff_rate": 0.22265625,
+      "eval_protocol": {
+        "advantage_scale": 1000.0,
+        "cutoff_outcome_policy": "placement_mapping",
+        "eval_seeds_policy": {
+          "mode": "seed + idx",
+          "seed_source": "league_rebench_seed"
+        },
+        "fitness_coeffs": {
+          "advantage": 1.0,
+          "avg_steps_norm": -100.0,
+          "cutoff_rate": -100.0,
+          "place_score": 10.0,
+          "win_lcb": 1000.0
+        },
+        "fitness_confidence": 0.8,
+        "games_per_cand": 256,
+        "league_rebench_seed": 1203,
+        "max_steps": 2048,
+        "opponent_sampling_policy": {
+          "exclude_self": true,
+          "fallback_if_empty": "baseline",
+          "pool_fixed": true,
+          "pool_size": 16,
+          "pool_size_effective": "min(league_cap, league_size)",
+          "source": "league_topk_selfplay"
+        },
+        "place_to_score": {
+          "1": 1.0,
+          "2": 0.6,
+          "3": 0.3,
+          "4": 0.1,
+          "5": 0.0,
+          "6": 0.0
+        },
+        "players": 6,
+        "protocol_kind": "league_rebench",
+        "scoring_version": "score_v2",
+        "seat_rotation_policy": {
+          "mode": "rotate",
+          "seed_source": "league_rebench_seed",
+          "start": "seed % players"
+        }
+      },
+      "eval_protocol_hash": "559c753f8819074948a8acd538c7ce862967dd457cc4814a219c71d05daa8555",
+      "fitness": -30.371417100186324,
+      "hash": "f838e5b3f136103c5811a551018f7f593ca65de1150e05212f955ef07a7b36ed",
+      "meta": {
+        "name": "best_20260130_073035_c002",
+        "note": "cycle=2; best_fitness=88.763815"
+      },
+      "name": "best_20260130_073035_c002",
+      "params_hash": "f838e5b3f136103c5811a551018f7f593ca65de1150e05212f955ef07a7b36ed",
+      "path": "best_20260130_073035_c002.json",
+      "place_score": 0.198828125,
+      "rank": 14,
+      "source_cycle": 2,
+      "source_run_id": "20260130-045558",
+      "win_lcb": 0.030711683931311268,
+      "win_rate": 0.044531249999999994,
+      "win_rate_ci_high": 0.06415770419101989,
+      "win_rate_ci_low": 0.030711683931311268
+    },
+    {
+      "advantage": -0.9147920075934882,
+      "bench_timestamp": "2026-01-30T07:49:44+00:00",
+      "created_at": "2026-01-30T05:52:12+00:00",
+      "cutoff_rate": 0.19921875,
+      "eval_protocol": {
+        "advantage_scale": 1000.0,
+        "cutoff_outcome_policy": "placement_mapping",
+        "eval_seeds_policy": {
+          "mode": "seed + idx",
+          "seed_source": "league_rebench_seed"
+        },
+        "fitness_coeffs": {
+          "advantage": 1.0,
+          "avg_steps_norm": -100.0,
+          "cutoff_rate": -100.0,
+          "place_score": 10.0,
+          "win_lcb": 1000.0
+        },
+        "fitness_confidence": 0.8,
+        "games_per_cand": 256,
+        "league_rebench_seed": 1203,
+        "max_steps": 2048,
+        "opponent_sampling_policy": {
+          "exclude_self": true,
+          "fallback_if_empty": "baseline",
+          "pool_fixed": true,
+          "pool_size": 16,
+          "pool_size_effective": "min(league_cap, league_size)",
+          "source": "league_topk_selfplay"
+        },
+        "place_to_score": {
+          "1": 1.0,
+          "2": 0.6,
+          "3": 0.3,
+          "4": 0.1,
+          "5": 0.0,
+          "6": 0.0
+        },
+        "players": 6,
+        "protocol_kind": "league_rebench",
+        "scoring_version": "score_v2",
+        "seat_rotation_policy": {
+          "mode": "rotate",
+          "seed_source": "league_rebench_seed",
+          "start": "seed % players"
+        }
+      },
+      "eval_protocol_hash": "559c753f8819074948a8acd538c7ce862967dd457cc4814a219c71d05daa8555",
+      "fitness": -42.46761149871065,
+      "hash": "b5235f9ff6308adb494f398fc54e7ac33226540c53938aa46d4b9b02d68d9947",
+      "meta": {
+        "name": "best_20260130_105212_c007",
+        "note": "cycle=7; best_fitness=80.738010"
+      },
+      "name": "best_20260130_105212_c007",
+      "params_hash": "b5235f9ff6308adb494f398fc54e7ac33226540c53938aa46d4b9b02d68d9947",
+      "path": "best_20260130_105212_c007.json",
+      "place_score": 0.18046874999999998,
+      "rank": 15,
+      "source_cycle": 7,
+      "source_run_id": "20260130-045558",
+      "win_lcb": 0.015794714688570334,
+      "win_rate": 0.02578125,
+      "win_rate_ci_high": 0.04181372200140397,
+      "win_rate_ci_low": 0.015794714688570334
+    },
+    {
+      "advantage": -0.8988374033109761,
+      "bench_timestamp": "2026-01-30T07:49:44+00:00",
+      "created_at": "2026-01-30T04:49:46+00:00",
+      "cutoff_rate": 0.20703125,
+      "eval_protocol": {
+        "advantage_scale": 1000.0,
+        "cutoff_outcome_policy": "placement_mapping",
+        "eval_seeds_policy": {
+          "mode": "seed + idx",
+          "seed_source": "league_rebench_seed"
+        },
+        "fitness_coeffs": {
+          "advantage": 1.0,
+          "avg_steps_norm": -100.0,
+          "cutoff_rate": -100.0,
+          "place_score": 10.0,
+          "win_lcb": 1000.0
+        },
+        "fitness_confidence": 0.8,
+        "games_per_cand": 256,
+        "league_rebench_seed": 1203,
+        "max_steps": 2048,
+        "opponent_sampling_policy": {
+          "exclude_self": true,
+          "fallback_if_empty": "baseline",
+          "pool_fixed": true,
+          "pool_size": 16,
+          "pool_size_effective": "min(league_cap, league_size)",
+          "source": "league_topk_selfplay"
+        },
+        "place_to_score": {
+          "1": 1.0,
+          "2": 0.6,
+          "3": 0.3,
+          "4": 0.1,
+          "5": 0.0,
+          "6": 0.0
+        },
+        "players": 6,
+        "protocol_kind": "league_rebench",
+        "scoring_version": "score_v2",
+        "seat_rotation_policy": {
+          "mode": "rotate",
+          "seed_source": "league_rebench_seed",
+          "start": "seed % players"
+        }
+      },
+      "eval_protocol_hash": "559c753f8819074948a8acd538c7ce862967dd457cc4814a219c71d05daa8555",
+      "fitness": -45.114385366434,
+      "hash": "7b9578368786b523b5c2601aca2df2ba5fbc7789a54737086e82c59d4deac0de",
+      "meta": {
+        "name": "best_20260130_094946_c005",
+        "note": "cycle=5; best_fitness=91.064268"
+      },
+      "name": "best_20260130_094946_c005",
+      "params_hash": "7b9578368786b523b5c2601aca2df2ba5fbc7789a54737086e82c59d4deac0de",
+      "path": "best_20260130_094946_c005.json",
+      "place_score": 0.173046875,
+      "rank": 16,
+      "source_cycle": 5,
+      "source_run_id": "20260130-045558",
+      "win_lcb": 0.015497121409435568,
+      "win_rate": 0.025390624999999997,
+      "win_rate_ci_high": 0.0413350454590313,
+      "win_rate_ci_low": 0.015497121409435568
+    }
+  ],
+  "top_k": 16,
+  "version": 1
+}

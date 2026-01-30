@@ -1344,7 +1344,7 @@ def render_training_mode() -> None:
         top_k_pool = st.number_input("Top-K pool", min_value=1, value=16, step=1)
         league_cap = st.number_input("League cap", min_value=1, value=16, step=1)
         max_new_bests = st.number_input("Max new bests", min_value=1, value=16, step=1)
-        meta_plateau_cycles = st.number_input("Meta-plateau cycles", min_value=1, value=2, step=1)
+        meta_plateau_cycles = st.number_input("Meta-plateau cycles", min_value=1, value=1, step=1)
         bootstrap_min_league_for_pool = st.number_input(
             "Bootstrap min league",
             min_value=0,
@@ -1367,16 +1367,16 @@ def render_training_mode() -> None:
         with st.expander("Advanced"):
             seed = st.number_input("Seed", min_value=0, max_value=999999, value=123, step=1)
             workers = st.number_input("Workers", min_value=1, value=_default_workers(), step=1)
-            population = st.number_input("Population", min_value=4, value=64, step=1)
-            elite = st.number_input("Elite", min_value=1, value=16, step=1)
-            auto_games_per_cand = st.checkbox("Авто games per candidate", value=False)
+            population = st.number_input("Population", min_value=16, value=64, step=1)
+            elite = st.number_input("Elite", min_value=4, value=16, step=1)
+            auto_games_per_cand = st.checkbox("Авто games per candidate", value=True)
             games_label = "Games per candidate (стартовое)" if auto_games_per_cand else "Games per candidate"
             games_per_cand = st.number_input(games_label, min_value=1, value=16, step=1)
-            games_per_cand_min = 8
+            games_per_cand_min = 4
             games_per_cand_max = 64
             games_per_cand_target_ci = 0.20
             if auto_games_per_cand:
-                games_per_cand_min = st.number_input("Games per candidate min", min_value=1, value=8, step=1)
+                games_per_cand_min = st.number_input("Games per candidate min", min_value=1, value=4, step=1)
                 games_per_cand_max = st.number_input(
                     "Games per candidate max",
                     min_value=int(games_per_cand_min),
@@ -1403,9 +1403,9 @@ def render_training_mode() -> None:
             )
             bench_max_games = st.number_input("Bench games (max)", min_value=32, value=512, step=32)
             bench_min_games = st.number_input("Early-stop min games", min_value=10, value=128, step=10)
-            max_steps = st.number_input("Max steps", min_value=100, value=2048, step=100)
-            epoch_iters = st.number_input("Epoch iters", min_value=1, value=8, step=1)
-            plateau_epochs = st.number_input("Plateau epochs", min_value=1, value=2, step=1)
+            max_steps = st.number_input("Max steps", min_value=128, value=2048, step=1)
+            epoch_iters = st.number_input("Epoch iters", min_value=1, value=10, step=1)
+            plateau_epochs = st.number_input("Plateau epochs", min_value=1, value=1, step=1)
             plateau_delta = st.number_input(
                 "Plateau delta",
                 min_value=0.0,
