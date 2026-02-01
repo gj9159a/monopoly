@@ -130,12 +130,39 @@ TRADE_FEATURES = [
     "card_delta",
 ]
 
+LIQUIDITY_FEATURES = [
+    "bias",
+    "asset_value",
+    "low_value",
+    "breaks_monopoly",
+    "has_buildings",
+    "group_heat",
+    "group_heat_vs_base",
+    "cell_heat",
+    "landing_prob_group",
+    "jail_exit_heat_group",
+    "is_railroad",
+    "is_utility",
+    "cash_needed",
+    "buffer_gap",
+    "action_sell_building",
+    "action_mortgage",
+    "positional_threat_self",
+    "purpose_auction",
+    "purpose_build",
+    "purpose_trade_offer",
+    "purpose_trade_accept",
+    "purpose_jail",
+    "purpose_buffer",
+]
+
 DECISION_FEATURES = {
     "auction": AUCTION_FEATURES,
     "build": BUILD_FEATURES,
     "mortgage": MORTGAGE_FEATURES,
     "jail": JAIL_FEATURES,
     "trade": TRADE_FEATURES,
+    "liquidity": LIQUIDITY_FEATURES,
 }
 
 
@@ -274,6 +301,31 @@ def _default_weights() -> dict[str, dict[str, dict[str, float]]]:
         "utility_delta": 0.2,
         "card_delta": 0.8,
     }
+    liquidity_base = {
+        "bias": 0.0,
+        "asset_value": -0.6,
+        "low_value": 0.9,
+        "breaks_monopoly": -1.1,
+        "has_buildings": -0.8,
+        "group_heat": 0.0,
+        "group_heat_vs_base": 0.0,
+        "cell_heat": 0.0,
+        "landing_prob_group": 0.0,
+        "jail_exit_heat_group": 0.0,
+        "is_railroad": 0.1,
+        "is_utility": 0.05,
+        "cash_needed": 1.0,
+        "buffer_gap": 0.6,
+        "action_sell_building": 0.6,
+        "action_mortgage": 0.2,
+        "positional_threat_self": 0.0,
+        "purpose_auction": 0.0,
+        "purpose_build": 0.0,
+        "purpose_trade_offer": 0.0,
+        "purpose_trade_accept": 0.0,
+        "purpose_jail": 0.0,
+        "purpose_buffer": 0.0,
+    }
     return {
         "auction": _stage_weights(
             auction_base,
@@ -304,6 +356,12 @@ def _default_weights() -> dict[str, dict[str, dict[str, float]]]:
             early={"cash_after": 0.5, "monopoly_delta": 1.0},
             mid={"monopoly_delta": 1.4, "group_heat_delta": 0.5},
             late={"liquidity_ratio": 0.6, "opponent_monopoly_delta": -1.2},
+        ),
+        "liquidity": _stage_weights(
+            liquidity_base,
+            early={"action_sell_building": 0.8},
+            mid={"action_mortgage": 0.25},
+            late={"action_mortgage": 0.35, "breaks_monopoly": -1.4},
         ),
     }
 
@@ -577,8 +635,106 @@ def compute_cash_buffer(state: GameState, player: Player, params: BotParams) -> 
     return max(0, int(buffer_value))
 
 
+def estimate_max_liquid_cash(state: GameState, player: Player) -> int:
+    available_cash = int(player.money)
+    houses = {cell.index: cell.houses for cell in state.board}
+    hotels = {cell.index: cell.hotels for cell in state.board}
+    mortgaged = {cell.index: cell.mortgaged for cell in state.board}
+    guard = 0
+
+    while guard < 500:
+        guard += 1
+        allow_hotel = _bank_houses_available(state, houses) >= 4
+        candidates = [
+            cell
+            for cell in state.board
+            if _can_sell_building_local(state, player.player_id, cell, houses, hotels, allow_hotel)
+        ]
+        if not candidates:
+            break
+        candidates.sort(
+            key=lambda c: (-_property_level(houses[c.index], hotels[c.index]), c.index)
+        )
+        cell = candidates[0]
+        refund = int((cell.house_cost or 0) / 2)
+        if hotels[cell.index] > 0:
+            hotels[cell.index] = 0
+            houses[cell.index] = 4
+        else:
+            houses[cell.index] = max(0, houses[cell.index] - 1)
+        available_cash += refund
+
+    for cell in state.board:
+        if not _can_mortgage_local(state, player.player_id, cell, houses, hotels, mortgaged):
+            continue
+        mortgage_value = int(cell.mortgage_value or 0)
+        if mortgage_value <= 0:
+            continue
+        mortgaged[cell.index] = True
+        available_cash += mortgage_value
+
+    return int(available_cash)
+
+
 def _property_level(houses: int, hotels: int) -> int:
     return houses + hotels * 5
+
+
+def _bank_houses_available(state: GameState, houses: dict[int, int]) -> int:
+    total_houses = sum(houses.values())
+    return int(state.rules.bank_houses) - total_houses
+
+
+def _bank_hotels_available(state: GameState, hotels: dict[int, int]) -> int:
+    total_hotels = sum(hotels.values())
+    return int(state.rules.bank_hotels) - total_hotels
+
+
+def _can_sell_building_local(
+    state: GameState,
+    player_id: int,
+    cell: Cell,
+    houses: dict[int, int],
+    hotels: dict[int, int],
+    allow_hotel: bool,
+) -> bool:
+    if cell.owner_id != player_id or cell.cell_type != "property":
+        return False
+    if cell.house_cost is None:
+        return False
+    level = _property_level(houses[cell.index], hotels[cell.index])
+    if level <= 0:
+        return False
+    if hotels[cell.index] > 0 and not allow_hotel:
+        return False
+    group_cells = _group_cells(state, cell.group)
+    if not group_cells:
+        return False
+    max_level = max(_property_level(houses[c.index], hotels[c.index]) for c in group_cells)
+    return level == max_level
+
+
+def _can_mortgage_local(
+    state: GameState,
+    player_id: int,
+    cell: Cell,
+    houses: dict[int, int],
+    hotels: dict[int, int],
+    mortgaged: dict[int, bool],
+) -> bool:
+    if cell.owner_id != player_id:
+        return False
+    if cell.cell_type not in {"property", "railroad", "utility"}:
+        return False
+    if mortgaged.get(cell.index, False):
+        return False
+    if houses.get(cell.index, 0) > 0 or hotels.get(cell.index, 0) > 0:
+        return False
+    if cell.cell_type == "property" and cell.group:
+        group_cells = _group_cells(state, cell.group)
+        if any(_property_level(houses[c.index], hotels[c.index]) > 0 for c in group_cells):
+            return False
+    return True
 
 
 def _group_cells(state: GameState, group: str | None) -> list[Cell]:
@@ -789,12 +945,14 @@ def decide_auction_bid(
     current_price: int,
     min_increment: int,
     params: BotParams,
+    cash_budget: int | None = None,
 ) -> int:
     if cell.price is None:
         return 0
+    budget = max(0, int(cash_budget)) if cash_budget is not None else int(player.money)
     stage = game_stage(state)
     weights = params.weights["auction"][stage]
-    max_bid = min(player.money, int(player.money * params.max_bid_fraction))
+    max_bid = min(budget, int(budget * params.max_bid_fraction))
     min_bid = current_price + min_increment
     if max_bid < min_bid:
         return 0
@@ -881,7 +1039,12 @@ def decide_auction_bid(
     return best_bid
 
 
-def decide_build_actions(state: GameState, player: Player, params: BotParams) -> list[dict[str, Any]]:
+def decide_build_actions(
+    state: GameState,
+    player: Player,
+    params: BotParams,
+    available_cash: int | None = None,
+) -> list[dict[str, Any]]:
     actions: list[dict[str, Any]] = []
     if player.bankrupt:
         return actions
@@ -996,7 +1159,7 @@ def decide_liquidation(
     start_cash = max(1, state.rules.starting_cash)
     threat_self = positional_threat_self(state, player.player_id) / start_cash
 
-    available_cash = player.money
+    available_cash = int(player.money) if available_cash is None else int(available_cash)
     local_houses = {cell.index: cell.houses for cell in state.board}
     local_hotels = {cell.index: cell.hotels for cell in state.board}
     local_mortgaged = {cell.index: cell.mortgaged for cell in state.board}
@@ -1055,6 +1218,122 @@ def decide_liquidation(
                 "action_sell_building": 0.0,
                 "action_mortgage": 1.0,
                 "positional_threat_self": threat_self,
+            }
+            score = _score_action(weights, features)
+            candidates.append((score, {"action": "mortgage", "cell_index": cell.index}, cell))
+
+        if not candidates:
+            break
+        candidates.sort(key=lambda item: item[0], reverse=True)
+        best_score, action, cell = candidates[0]
+        if best_score <= 0:
+            break
+        if action["action"] == "sell_building":
+            refund = int((cell.house_cost or 0) / 2)
+            if local_hotels[cell.index] > 0:
+                local_hotels[cell.index] = 0
+                local_houses[cell.index] = 4
+            else:
+                local_houses[cell.index] = max(0, local_houses[cell.index] - 1)
+            available_cash += refund
+        elif action["action"] == "mortgage":
+            local_mortgaged[cell.index] = True
+            available_cash += int(cell.mortgage_value or 0)
+        actions.append(action)
+
+    return actions
+
+
+def decide_liquidity(
+    state: GameState,
+    player: Player,
+    target_cash: int,
+    purpose: str,
+    params: BotParams,
+) -> list[dict[str, Any]]:
+    actions: list[dict[str, Any]] = []
+    if target_cash <= 0 or player.bankrupt:
+        return actions
+    if player.money >= target_cash:
+        return actions
+    stage = game_stage(state)
+    weights = params.weights["liquidity"][stage]
+    start_cash = max(1, state.rules.starting_cash)
+    threat_self = positional_threat_self(state, player.player_id) / start_cash
+
+    available_cash = int(player.money)
+    local_houses = {cell.index: cell.houses for cell in state.board}
+    local_hotels = {cell.index: cell.hotels for cell in state.board}
+    local_mortgaged = {cell.index: cell.mortgaged for cell in state.board}
+
+    purpose_flags = {
+        "purpose_auction": 1.0 if purpose == "auction" else 0.0,
+        "purpose_build": 1.0 if purpose == "build" else 0.0,
+        "purpose_trade_offer": 1.0 if purpose == "trade_offer" else 0.0,
+        "purpose_trade_accept": 1.0 if purpose == "trade_accept" else 0.0,
+        "purpose_jail": 1.0 if purpose == "jail" else 0.0,
+        "purpose_buffer": 1.0 if purpose == "buffer" else 0.0,
+    }
+
+    guard = 0
+    while available_cash < target_cash and guard < 200:
+        guard += 1
+        cash_needed = max(0, target_cash - available_cash) / 100.0
+        buffer_gap = max(0, target_cash - available_cash) / max(1.0, float(target_cash))
+        allow_hotel = _bank_houses_available(state, local_houses) >= 4
+
+        candidates: list[tuple[float, dict[str, Any], Cell]] = []
+        for cell in state.board:
+            if cell.owner_id != player.player_id:
+                continue
+            if _can_sell_building_local(state, player.player_id, cell, local_houses, local_hotels, allow_hotel):
+                features = {
+                    "bias": 1.0,
+                    "asset_value": estimate_asset_value(state, player, cell, params) / 100.0,
+                    "low_value": 1.0 / (1.0 + estimate_asset_value(state, player, cell, params) / 100.0),
+                    "breaks_monopoly": 1.0 if cell.group and _owns_group(state, player.player_id, cell.group) else 0.0,
+                    "has_buildings": 1.0,
+                    "group_heat": group_heat(state, cell.group),
+                    "group_heat_vs_base": group_heat_vs_base(state, cell.group),
+                    "cell_heat": cell_heat(state, cell.index),
+                    "landing_prob_group": landing_prob_group(state, cell.group),
+                    "jail_exit_heat_group": jail_exit_heat_group(state, cell.group),
+                    "is_railroad": 1.0 if cell.cell_type == "railroad" else 0.0,
+                    "is_utility": 1.0 if cell.cell_type == "utility" else 0.0,
+                    "cash_needed": cash_needed,
+                    "buffer_gap": buffer_gap,
+                    "action_sell_building": 1.0,
+                    "action_mortgage": 0.0,
+                    "positional_threat_self": threat_self,
+                    **purpose_flags,
+                }
+                score = _score_action(weights, features)
+                candidates.append((score, {"action": "sell_building", "cell_index": cell.index}, cell))
+
+            if not _can_mortgage_local(state, player.player_id, cell, local_houses, local_hotels, local_mortgaged):
+                continue
+            mortgage_value = int(cell.mortgage_value or 0)
+            if mortgage_value <= 0:
+                continue
+            features = {
+                "bias": 1.0,
+                "asset_value": estimate_asset_value(state, player, cell, params) / 100.0,
+                "low_value": 1.0 / (1.0 + estimate_asset_value(state, player, cell, params) / 100.0),
+                "breaks_monopoly": 1.0 if cell.group and _owns_group(state, player.player_id, cell.group) else 0.0,
+                "has_buildings": 0.0,
+                "group_heat": group_heat(state, cell.group),
+                "group_heat_vs_base": group_heat_vs_base(state, cell.group),
+                "cell_heat": cell_heat(state, cell.index),
+                "landing_prob_group": landing_prob_group(state, cell.group),
+                "jail_exit_heat_group": jail_exit_heat_group(state, cell.group),
+                "is_railroad": 1.0 if cell.cell_type == "railroad" else 0.0,
+                "is_utility": 1.0 if cell.cell_type == "utility" else 0.0,
+                "cash_needed": cash_needed,
+                "buffer_gap": buffer_gap,
+                "action_sell_building": 0.0,
+                "action_mortgage": 1.0,
+                "positional_threat_self": threat_self,
+                **purpose_flags,
             }
             score = _score_action(weights, features)
             candidates.append((score, {"action": "mortgage", "cell_index": cell.index}, cell))
@@ -1384,7 +1663,12 @@ def decide_trade_accept(
     }
 
 
-def decide_trade_offer(state: GameState, player: Player, params: BotParams) -> dict[str, Any] | None:
+def decide_trade_offer(
+    state: GameState,
+    player: Player,
+    params: BotParams,
+    available_cash: int | None = None,
+) -> dict[str, Any] | None:
     if player.bankrupt:
         return None
     opponents = [p for p in state.players if p.player_id != player.player_id and not p.bankrupt]
@@ -1393,7 +1677,8 @@ def decide_trade_offer(state: GameState, player: Player, params: BotParams) -> d
 
     tradeable_self = _tradeable_cells(state, player.player_id)
     buffer = compute_cash_buffer(state, player, params)
-    max_cash = max(0, player.money - buffer)
+    cash_source = player.money if available_cash is None else int(available_cash)
+    max_cash = max(0, cash_source - buffer)
 
     candidates: list[tuple[float, dict[str, Any]]] = []
 

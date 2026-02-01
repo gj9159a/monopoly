@@ -126,7 +126,7 @@ class ThinkingLiveBot:
 
     def decide(self, state: GameState, context: dict[str, Any]) -> dict[str, Any]:
         decision_type = context.get("type", "")
-        if decision_type not in {"auction_bid", "jail_decision", "economy_phase", "liquidation"}:
+        if decision_type not in {"auction_bid", "jail_decision", "economy_phase", "liquidation", "liquidity"}:
             return fast_decide(state, context, self.params)
 
         start = time.perf_counter()

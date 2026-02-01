@@ -13,6 +13,7 @@ from .params import (
     decide_trade_offer,
     decide_build_actions,
     decide_jail_exit,
+    decide_liquidity,
     decide_liquidation,
     estimate_asset_value,
 )
@@ -32,6 +33,7 @@ class Bot:
             "jail_decision",
             "economy_phase",
             "liquidation",
+            "liquidity",
         }:
             cache = None
             if self.params.thinking.cache_enabled:
@@ -62,6 +64,8 @@ class Bot:
             return self._decide_economy(state, context)
         if decision_type == "liquidation":
             return self._decide_liquidation(state, context)
+        if decision_type == "liquidity":
+            return self._decide_liquidity(state, context)
         if decision_type == "trade_offer":
             return self._decide_trade_offer(state, context)
         if decision_type == "trade_accept":
@@ -74,10 +78,19 @@ class Bot:
         cell: Cell = context["cell"]
         current_price = int(context["current_price"])
         min_increment = int(context["min_increment"])
+        cash_budget = context.get("cash_budget")
         increments = getattr(state.rules, "auction_increments", None)
         if not increments:
             increments = [min_increment]
-        target_max = decide_auction_bid(state, player, cell, current_price, min_increment, self.params)
+        target_max = decide_auction_bid(
+            state,
+            player,
+            cell,
+            current_price,
+            min_increment,
+            self.params,
+            cash_budget=int(cash_budget) if cash_budget is not None else None,
+        )
         bid = choose_auction_bid(int(target_max), current_price, list(increments))
         if bid <= 0:
             return {"action": "pass"}
@@ -104,10 +117,24 @@ class Bot:
         actions = decide_liquidation(state, player, debt, self.params)
         return {"actions": actions}
 
+    def _decide_liquidity(self, state: GameState, context: dict[str, Any]) -> dict[str, Any]:
+        player_id = int(context["player_id"])
+        player = state.players[player_id]
+        target_cash = int(context.get("target_cash", 0))
+        purpose = str(context.get("purpose") or "buffer")
+        actions = decide_liquidity(state, player, target_cash, purpose, self.params)
+        return {"actions": actions}
+
     def _decide_trade_offer(self, state: GameState, context: dict[str, Any]) -> dict[str, Any]:
         player_id = int(context["player_id"])
         player = state.players[player_id]
-        offer = decide_trade_offer(state, player, self.params)
+        cash_budget = context.get("cash_budget")
+        offer = decide_trade_offer(
+            state,
+            player,
+            self.params,
+            available_cash=int(cash_budget) if cash_budget is not None else None,
+        )
         if offer is None:
             return {"action": "pass"}
         return {"action": "offer", "offer": offer}

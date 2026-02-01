@@ -16,6 +16,7 @@ from .params import (
     decide_auction_bid,
     decide_build_actions,
     decide_jail_exit,
+    decide_liquidity,
     decide_liquidation,
     estimate_asset_value,
     _group_cells,
@@ -48,10 +49,19 @@ def fast_decide(state: GameState, context: dict[str, Any], params: BotParams) ->
         cell = context["cell"]
         current_price = int(context["current_price"])
         min_increment = int(context["min_increment"])
+        cash_budget = context.get("cash_budget")
         increments = getattr(state.rules, "auction_increments", None)
         if not increments:
             increments = [min_increment]
-        target_max = decide_auction_bid(state, player, cell, current_price, min_increment, params)
+        target_max = decide_auction_bid(
+            state,
+            player,
+            cell,
+            current_price,
+            min_increment,
+            params,
+            cash_budget=int(cash_budget) if cash_budget is not None else None,
+        )
         bid = choose_auction_bid(int(target_max), current_price, list(increments))
         if bid <= 0:
             return {"action": "pass"}
@@ -66,13 +76,26 @@ def fast_decide(state: GameState, context: dict[str, Any], params: BotParams) ->
     if decision_type == "economy_phase":
         player_id = int(context["player_id"])
         player = state.players[player_id]
-        actions = decide_build_actions(state, player, params)
+        cash_budget = context.get("cash_budget")
+        actions = decide_build_actions(
+            state,
+            player,
+            params,
+            available_cash=int(cash_budget) if cash_budget is not None else None,
+        )
         return {"actions": actions}
     if decision_type == "liquidation":
         player_id = int(context["player_id"])
         player = state.players[player_id]
         debt = int(context.get("debt", 0))
         actions = decide_liquidation(state, player, debt, params)
+        return {"actions": actions}
+    if decision_type == "liquidity":
+        player_id = int(context["player_id"])
+        player = state.players[player_id]
+        target_cash = int(context.get("target_cash", 0))
+        purpose = str(context.get("purpose") or "buffer")
+        actions = decide_liquidity(state, player, target_cash, purpose, params)
         return {"actions": actions}
     if decision_type == "trade_offer":
         return {"action": "pass"}
@@ -162,8 +185,31 @@ def _apply_mortgage_action(state: GameState, player_id: int, cell_index: int) ->
     state.players[player_id].money += mortgage_value
 
 
+def _bank_houses_available(state: GameState) -> int:
+    total = sum(cell.houses for cell in state.board)
+    return int(state.rules.bank_houses) - total
+
+
+def _can_sell_building_local(state: GameState, player_id: int, cell: Cell) -> bool:
+    if cell.owner_id != player_id or cell.cell_type != "property":
+        return False
+    if cell.house_cost is None:
+        return False
+    if cell.hotels <= 0 and cell.houses <= 0:
+        return False
+    if cell.hotels > 0 and _bank_houses_available(state) < 4:
+        return False
+    group_cells = _group_cells(state, cell.group)
+    if not group_cells:
+        return False
+    max_level = max(_property_level(c.houses, c.hotels) for c in group_cells)
+    return _property_level(cell.houses, cell.hotels) == max_level
+
+
 def _apply_sell_building(state: GameState, player_id: int, cell_index: int) -> None:
     cell = state.board[cell_index]
+    if not _can_sell_building_local(state, player_id, cell):
+        return
     if cell.owner_id != player_id:
         return
     if cell.house_cost is None:
@@ -223,6 +269,11 @@ def _rollout_task(task: tuple[GameState, BotParams, int, dict[str, Any], dict[st
         if isinstance(actions, list):
             _apply_liquidation_actions(cloned, player_id, actions)
         action_to_apply = None
+    elif action.get("action_type") == "liquidity":
+        actions = action.get("actions", [])
+        if isinstance(actions, list):
+            _apply_liquidation_actions(cloned, player_id, actions)
+        action_to_apply = None
     else:
         action_to_apply = action
 
@@ -273,14 +324,24 @@ def _auction_candidates(
     params: BotParams,
     current_price: int,
     min_increment: int,
+    cash_budget: int | None = None,
 ) -> list[dict[str, Any]]:
     increments = getattr(state.rules, "auction_increments", None)
     if not increments:
         increments = [min_increment]
-    target_max = decide_auction_bid(state, player, cell, current_price, min_increment, params)
+    budget = player.money if cash_budget is None else int(cash_budget)
+    target_max = decide_auction_bid(
+        state,
+        player,
+        cell,
+        current_price,
+        min_increment,
+        params,
+        cash_budget=budget,
+    )
     buffer = compute_cash_buffer(state, player, params)
-    max_cash = max(0, player.money - buffer)
-    max_bid = min(player.money, int(max_cash * params.max_bid_fraction), int(target_max))
+    max_cash = max(0, budget - buffer)
+    max_bid = min(budget, int(max_cash * params.max_bid_fraction), int(target_max))
     min_bid = current_price + min(increments) if increments else current_price + min_increment
     if max_bid < min_bid:
         return [{"action": "pass"}]
@@ -355,8 +416,18 @@ def _plan_to_level(state: GameState, player: Player, group: str, target: int, ma
     return plan
 
 
-def _build_candidates(state: GameState, player: Player, params: BotParams) -> list[dict[str, Any]]:
-    base_actions = decide_build_actions(state, player, params)
+def _build_candidates(
+    state: GameState,
+    player: Player,
+    params: BotParams,
+    cash_budget: int | None = None,
+) -> list[dict[str, Any]]:
+    base_actions = decide_build_actions(
+        state,
+        player,
+        params,
+        available_cash=int(cash_budget) if cash_budget is not None else None,
+    )
     candidates: list[list[dict[str, Any]]] = []
     candidates.append([])
     if base_actions:
@@ -464,9 +535,15 @@ def choose_action(
             params,
             int(context["current_price"]),
             int(context["min_increment"]),
+            cash_budget=int(context.get("cash_budget")) if context.get("cash_budget") is not None else None,
         )
     elif decision_type == "economy_phase":
-        candidates = _build_candidates(state, player, params)
+        candidates = _build_candidates(
+            state,
+            player,
+            params,
+            cash_budget=int(context.get("cash_budget")) if context.get("cash_budget") is not None else None,
+        )
     elif decision_type == "jail_decision":
         candidates = _jail_candidates(state, player)
     elif decision_type == "mortgage":
@@ -480,6 +557,17 @@ def choose_action(
             if len(base_actions) > 1:
                 candidates.append(
                     {"action_type": "liquidation", "actions": base_actions[: max(1, len(base_actions) // 2)]}
+                )
+    elif decision_type == "liquidity":
+        target_cash = int(context.get("target_cash", 0))
+        purpose = str(context.get("purpose") or "buffer")
+        base_actions = decide_liquidity(state, player, target_cash, purpose, params)
+        candidates = [{"action_type": "liquidity", "actions": []}]
+        if base_actions:
+            candidates.append({"action_type": "liquidity", "actions": base_actions})
+            if len(base_actions) > 1:
+                candidates.append(
+                    {"action_type": "liquidity", "actions": base_actions[: max(1, len(base_actions) // 2)]}
                 )
     else:
         return fast_decide(state, context, params), ThinkingStats(decision_type, 0.0, 1, 0, 0.0)

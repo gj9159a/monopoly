@@ -7,7 +7,14 @@ from pathlib import Path
 
 from .bots import Bot, create_bots
 from .data_loader import load_board, load_cards, load_rules
-from .params import BotParams, evaluate_trade_for_player, normalize_auction_price
+from .params import (
+    BotParams,
+    compute_cash_buffer,
+    decide_build_actions,
+    estimate_max_liquid_cash,
+    evaluate_trade_for_player,
+    normalize_auction_price,
+)
 from .models import Card, Cell, DeckState, Event, GameState, Player, TradeHistory
 
 
@@ -205,6 +212,8 @@ class Engine:
         state = self.state
         events: list[Event] = []
         fine = state.rules.jail_fine
+        if player.money < fine:
+            events.extend(self._ensure_liquidity(player, fine, "jail", turn_index))
         decision = self.bots[player.player_id].decide(
             state,
             {
@@ -1030,6 +1039,97 @@ class Engine:
         candidates.sort(key=lambda c: (-self._property_level(c), c.index))
         return candidates[0]
 
+    def _can_sell_building(self, owner_id: int, cell: Cell, allow_hotel: bool = True) -> bool:
+        if cell.owner_id != owner_id or cell.cell_type != "property":
+            return False
+        if cell.house_cost is None:
+            return False
+        if cell.houses <= 0 and cell.hotels <= 0:
+            return False
+        if cell.hotels > 0 and not allow_hotel:
+            return False
+        group_cells = self._group_cells(owner_id, cell.group or "")
+        if not group_cells:
+            return False
+        max_level = max(self._property_level(c) for c in group_cells)
+        return self._property_level(cell) == max_level
+
+    def _sell_building_action(self, player: Player, cell: Cell, turn_index: int) -> list[Event]:
+        allow_hotel_sale = self._bank_houses_available() >= 4
+        if not self._can_sell_building(player.player_id, cell, allow_hotel=allow_hotel_sale):
+            return []
+        refund = int((cell.house_cost or 0) / 2)
+        if cell.hotels > 0:
+            if not allow_hotel_sale:
+                return []
+            cell.hotels = 0
+            cell.houses = 4
+            building = "hotel"
+        else:
+            cell.houses = max(0, cell.houses - 1)
+            building = "house"
+        player.money += refund
+        return [
+            Event(
+                type="SELL_BUILDING",
+                turn_index=turn_index,
+                player_id=player.player_id,
+                msg_ru=f"{player.name} продает {building} на '{cell.name}' за {refund}",
+                payload={"cell_index": cell.index, "refund": refund, "building": building},
+            )
+        ]
+
+    def _apply_liquidity_actions(
+        self,
+        player: Player,
+        actions: list[dict[str, Any]],
+        turn_index: int,
+        target_cash: int | None = None,
+    ) -> list[Event]:
+        events: list[Event] = []
+        for action in actions:
+            if target_cash is not None and player.money >= target_cash:
+                break
+            kind = action.get("action")
+            cell_index = action.get("cell_index")
+            if cell_index is None:
+                continue
+            idx = int(cell_index)
+            if idx < 0 or idx >= len(self.state.board):
+                continue
+            cell = self.state.board[idx]
+            if kind == "sell_building":
+                events.extend(self._sell_building_action(player, cell, turn_index))
+            elif kind == "mortgage":
+                events.extend(self._mortgage_property(player, cell, turn_index))
+        return events
+
+    def _ensure_liquidity(
+        self,
+        player: Player,
+        target_cash: int,
+        purpose: str,
+        turn_index: int,
+    ) -> list[Event]:
+        if target_cash <= 0 or player.bankrupt:
+            return []
+        if player.money >= target_cash:
+            return []
+        bot = self.bots[player.player_id]
+        decision = bot.decide(
+            self.state,
+            {
+                "type": "liquidity",
+                "player_id": player.player_id,
+                "target_cash": int(target_cash),
+                "purpose": str(purpose),
+            },
+        )
+        actions = decision.get("actions", [])
+        if not isinstance(actions, list):
+            return []
+        return self._apply_liquidity_actions(player, actions, turn_index, target_cash=int(target_cash))
+
     def _mortgage_properties(self, player: Player, turn_index: int, target_cash: int) -> list[Event]:
         events: list[Event] = []
         if target_cash <= 0:
@@ -1175,11 +1275,31 @@ class Engine:
         if player.bankrupt or self.state.game_over:
             return []
         bot = self.bots[player.player_id]
+        events: list[Event] = []
+        buffer_target = compute_cash_buffer(self.state, player, bot.params)
+        if player.money < buffer_target:
+            events.extend(self._ensure_liquidity(player, buffer_target, "buffer", turn_index))
+
+        max_cash_budget = estimate_max_liquid_cash(self.state, player)
+        planned_actions = decide_build_actions(
+            self.state, player, bot.params, available_cash=max_cash_budget
+        )
+        planned_cost = 0
+        for action in planned_actions:
+            if action.get("action") != "build":
+                continue
+            cell_index = action.get("cell_index")
+            if cell_index is None:
+                continue
+            cell = self.state.board[int(cell_index)]
+            planned_cost += int(cell.house_cost or 0)
+        if planned_cost > player.money:
+            events.extend(self._ensure_liquidity(player, planned_cost, "build", turn_index))
+
         decision = bot.decide(
             self.state,
             {"type": "economy_phase", "player_id": player.player_id},
         )
-        events: list[Event] = []
         for action in decision.get("actions", []):
             action_type = action.get("action")
             cell_index = action.get("cell_index")
@@ -1198,7 +1318,11 @@ class Engine:
             return []
         decision = self.bots[player.player_id].decide(
             state,
-            {"type": "trade_offer", "player_id": player.player_id},
+            {
+                "type": "trade_offer",
+                "player_id": player.player_id,
+                "cash_budget": estimate_max_liquid_cash(state, player),
+            },
         )
         if decision.get("action") != "offer":
             return []
@@ -1214,9 +1338,20 @@ class Engine:
                     payload={"reason": error},
                 )
             ]
+        from_id = offer["from_player"]
+        to_id = offer["to_player"]
+        from_player = state.players[from_id]
+        to_player = state.players[to_id]
+        offer_hash = self._trade_offer_hash(offer)
+
+        events: list[Event] = []
+        required_from = self._trade_required_cash(offer, from_id)
+        if required_from > from_player.money:
+            events.extend(self._ensure_liquidity(from_player, required_from, "trade_offer", turn_index))
+
         valid, reason = self._validate_trade_offer(offer)
         if not valid:
-            return [
+            events.append(
                 Event(
                     type="TRADE_INVALID",
                     turn_index=turn_index,
@@ -1224,15 +1359,10 @@ class Engine:
                     msg_ru=f"{player.name} предложил недопустимую сделку ({reason})",
                     payload={"reason": reason, "offer": offer},
                 )
-            ]
+            )
+            return events
 
-        from_id = offer["from_player"]
-        to_id = offer["to_player"]
-        from_player = state.players[from_id]
-        to_player = state.players[to_id]
-        offer_hash = self._trade_offer_hash(offer)
-
-        events: list[Event] = [
+        events.append(
             Event(
                 type="TRADE_OFFER",
                 turn_index=turn_index,
@@ -1240,7 +1370,7 @@ class Engine:
                 msg_ru=f"{from_player.name} предлагает сделку {to_player.name}",
                 payload={"offer": offer},
             )
-        ]
+        )
 
         decision_to = self.bots[to_id].decide(
             state,
@@ -1250,6 +1380,31 @@ class Engine:
         valid_decision = bool(decision_to.get("valid", True))
         accept = decision_to.get("action") == "accept" and valid_decision and score > 0.0
         policy_to = str(decision_to.get("mortgage_policy") or "keep")
+
+        if accept:
+            required_to = self._trade_required_cash(offer, to_id)
+            if required_to > to_player.money:
+                events.extend(self._ensure_liquidity(to_player, required_to, "trade_accept", turn_index))
+                valid, reason = self._validate_trade_offer(offer)
+                if not valid:
+                    events.append(
+                        Event(
+                            type="TRADE_INVALID",
+                            turn_index=turn_index,
+                            player_id=from_id,
+                            msg_ru=f"{from_player.name} предложил недопустимую сделку ({reason})",
+                            payload={"reason": reason, "offer": offer},
+                        )
+                    )
+                    return events
+                decision_to = self.bots[to_id].decide(
+                    state,
+                    {"type": "trade_accept", "player_id": to_id, "offer": offer},
+                )
+                score = float(decision_to.get("score", 0.0))
+                valid_decision = bool(decision_to.get("valid", True))
+                accept = decision_to.get("action") == "accept" and valid_decision and score > 0.0
+                policy_to = str(decision_to.get("mortgage_policy") or "keep")
 
         if not self._trade_offer_improved(from_id, to_id, score):
             events.append(
@@ -1428,6 +1583,23 @@ class Engine:
             if cell.mortgaged:
                 total += int((cell.mortgage_value or 0) * interest)
         return total
+
+    def _trade_required_cash(self, offer: dict[str, Any], player_id: int) -> int:
+        from_id = int(offer.get("from_player", -1))
+        to_id = int(offer.get("to_player", -1))
+        give_cash = int(offer.get("give_cash", 0) or 0)
+        receive_cash = int(offer.get("receive_cash", 0) or 0)
+        give_props = list(offer.get("give_props", []))
+        receive_props = list(offer.get("receive_props", []))
+        if player_id == from_id:
+            fee = self._trade_interest_fee(receive_props)
+            required = give_cash - receive_cash + fee
+        elif player_id == to_id:
+            fee = self._trade_interest_fee(give_props)
+            required = receive_cash - give_cash + fee
+        else:
+            return 0
+        return max(0, int(required))
 
     def _tradeable_cell(self, cell: Cell) -> bool:
         if cell.cell_type not in {"property", "railroad", "utility"}:
@@ -1628,14 +1800,24 @@ class Engine:
             for player_id in active[:]:
                 current_price = normalize_auction_price(current_price, increments)
                 player = state.players[player_id]
+                cash_budget = estimate_max_liquid_cash(state, player)
                 context = {
                     "type": "auction_bid",
                     "player_id": player_id,
                     "cell": cell,
                     "current_price": current_price,
                     "min_increment": min_increment,
+                    "cash_budget": cash_budget,
                 }
                 decision = self.bots[player_id].decide(state, context)
+                if decision.get("action") == "bid":
+                    bid = int(decision.get("bid", 0))
+                    if bid > player.money:
+                        events.extend(self._ensure_liquidity(player, bid, "auction", turn_index))
+                        if bid > player.money:
+                            fallback_context = dict(context)
+                            fallback_context.pop("cash_budget", None)
+                            decision = self.bots[player_id].decide(state, fallback_context)
                 if decision.get("action") == "bid":
                     bid = int(decision.get("bid", 0))
                     increment = bid - current_price
