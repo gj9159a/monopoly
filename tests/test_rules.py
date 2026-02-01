@@ -35,6 +35,26 @@ def _aggressive_auction_params() -> BotParams:
     )
 
 
+def _pick_property_cells(engine, count: int = 2):
+    props = [cell for cell in engine.state.board if cell.cell_type == "property"]
+    if len(props) < count:
+        raise AssertionError("Недостаточно property-клеток для теста")
+    return props[:count]
+
+
+def _pick_property_cells_distinct_groups(engine):
+    props = [cell for cell in engine.state.board if cell.cell_type == "property"]
+    by_group: dict[str, list] = {}
+    for cell in props:
+        group = cell.group or ""
+        by_group.setdefault(group, []).append(cell)
+    groups = [group for group in by_group.keys() if group]
+    if len(groups) < 2:
+        raise AssertionError("Недостаточно разных групп для теста")
+    first = by_group[groups[0]][0]
+    second = by_group[groups[1]][0]
+    return first, second
+
 def test_hr1_always_auction():
     engine = _engine_with_rng([1, 2], bot_params=_aggressive_auction_params())
     engine.state.players[0].position = 0
@@ -109,3 +129,42 @@ def test_game_end_on_bankruptcy():
     assert engine.state.game_over is True
     assert engine.state.winner_id == owner.player_id
     assert any(event.type == "GAME_END" for event in events)
+
+
+def test_liquidation_skips_hotel_when_bank_houses_short():
+    engine = create_engine(num_players=2, seed=1)
+    player = engine.state.players[0]
+    player.money = 0
+    engine.state.rules.bank_houses = 3
+
+    hotel_cell, house_cell = _pick_property_cells_distinct_groups(engine)
+    for cell in (hotel_cell, house_cell):
+        cell.owner_id = player.player_id
+    if hotel_cell.house_cost is None:
+        hotel_cell.house_cost = 100
+    if house_cell.house_cost is None:
+        house_cell.house_cost = 100
+
+    hotel_cell.hotels = 1
+    hotel_cell.houses = 0
+    house_cell.hotels = 0
+    house_cell.houses = 1
+
+    events = engine._liquidate_buildings(player, turn_index=0, target_cash=1)
+
+    assert any(event.type == "SELL_BUILDING" and event.payload["building"] == "house" for event in events)
+    assert hotel_cell.hotels == 1
+    assert house_cell.houses == 0
+
+
+def test_bankruptcy_auctions_even_when_hr1_disabled():
+    engine = create_engine(num_players=2, seed=1)
+    engine.state.rules.hr1_always_auction = False
+    player = engine.state.players[0]
+
+    (cell,) = _pick_property_cells(engine, 1)
+    cell.owner_id = player.player_id
+
+    events = engine._bankrupt_player(player, None, turn_index=0, reason="test")
+
+    assert any(event.type == "AUCTION_START" for event in events)

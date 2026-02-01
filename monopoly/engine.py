@@ -857,11 +857,14 @@ class Engine:
         if target_cash <= 0:
             return events
         while player.money < target_cash:
-            cell = self._find_sell_candidate(player.player_id)
+            allow_hotel_sale = self._bank_houses_available() >= 4
+            cell = self._find_sell_candidate(player.player_id, allow_hotel=allow_hotel_sale)
             if cell is None or cell.house_cost is None:
                 break
             refund = int(cell.house_cost / 2)
             if cell.hotels > 0:
+                if not allow_hotel_sale:
+                    break
                 cell.hotels = 0
                 cell.houses = 4
                 building = "hotel"
@@ -901,11 +904,7 @@ class Engine:
             if creditor_id is None:
                 cell.owner_id = None
                 cell.mortgaged = False
-                if self.state.rules.hr1_always_auction and cell.cell_type in {
-                    "property",
-                    "railroad",
-                    "utility",
-                }:
+                if cell.cell_type in {"property", "railroad", "utility"}:
                     auction_events.extend(self._run_auction(cell, turn_index))
             else:
                 cell.owner_id = creditor_id
@@ -1011,12 +1010,14 @@ class Engine:
     def _property_level(self, cell: Cell) -> int:
         return cell.houses + cell.hotels * 5
 
-    def _find_sell_candidate(self, owner_id: int) -> Cell | None:
+    def _find_sell_candidate(self, owner_id: int, allow_hotel: bool = True) -> Cell | None:
         candidates: list[Cell] = []
         for cell in self.state.board:
             if cell.owner_id != owner_id or cell.cell_type != "property":
                 continue
             if self._property_level(cell) <= 0:
+                continue
+            if cell.hotels > 0 and not allow_hotel:
                 continue
             group_cells = self._group_cells(owner_id, cell.group or "")
             if not group_cells:
