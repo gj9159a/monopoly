@@ -1413,7 +1413,7 @@ def render_training_mode() -> None:
             )
             bench_max_games = st.number_input("Bench games (max)", min_value=32, value=512, step=32)
             bench_min_games = st.number_input("Early-stop min games", min_value=10, value=128, step=10)
-            max_steps = st.number_input("Max steps", min_value=128, value=2048, step=1)
+            max_steps = st.number_input("Max steps", min_value=128, value=1024, step=1)
             epoch_iters = st.number_input("Epoch iters", min_value=1, value=10, step=1)
             plateau_epochs = st.number_input("Plateau epochs", min_value=1, value=1, step=1)
             plateau_delta = st.number_input(

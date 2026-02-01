@@ -16,3 +16,4 @@ htmlcov/
 runs/*
 .DS_Store
 monopoly/data/cards_texts_ru_official.yaml
+monopoly/data/league/
