@@ -252,6 +252,35 @@ def _load_pool_params(snapshot: list[dict[str, Any]], league_dir: Path) -> list[
     return params_list
 
 
+def _load_league_pool_params(
+    league_dir: Path,
+    league_cap: int,
+    baseline: BotParams,
+) -> tuple[list[BotParams], bool]:
+    index = load_index(league_dir)
+    items = index.get("items", [])[: int(league_cap)]
+    params_list: list[BotParams] = []
+    for entry in items:
+        path = resolve_entry_path(entry, league_dir)
+        if not path.exists():
+            continue
+        try:
+            params = load_params(path).with_thinking(ThinkingConfig())
+        except Exception:
+            continue
+        params_list.append(params)
+    if not params_list:
+        return [baseline], True
+    return params_list, False
+
+
+def _append_progress_line(path: Path, message: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(message)
+        handle.write("\n")
+
+
 def _load_best_params(best_path: Path) -> BotParams:
     return load_params(best_path).with_thinking(ThinkingConfig())
 
@@ -922,34 +951,61 @@ def run_autoevolve(
 
         new_bests_count += 1
         cycle_status = _read_cycle_status(cycle_dir) or {}
-        best_fitness_raw = _coerce_fitness(cycle_status.get("best_fitness"))
-        fitness_valid = _fitness_is_valid(best_fitness_raw)
-        best_fitness = best_fitness_raw if fitness_valid else 0.0
         best_path = cycle_dir / "best.json"
         best_params = _load_best_params(best_path)
+        train_best_fitness = _coerce_fitness(cycle_status.get("best_fitness"))
+
+        promotion_games = int(rebench_games)
+        promotion_max_steps = int(rebench_max_steps)
+        promotion_seed = int(rebench_seed)
+        promotion_pool, promotion_pool_fallback = _load_league_pool_params(
+            league_dir=league_dir,
+            league_cap=int(league_cap),
+            baseline=baseline,
+        )
+        promotion_result = bench(
+            candidate=best_params,
+            baseline=baseline,
+            league_dir=league_dir,
+            opponents="league",
+            num_players=6,
+            games=promotion_games,
+            seed=promotion_seed,
+            max_steps=promotion_max_steps,
+            cand_seats="rotate",
+            min_games=promotion_games,
+            delta=0.0,
+            seeds_file=None,
+            opponents_pool=promotion_pool,
+            workers=workers,
+        )
+
+        best_fitness = float(promotion_result["fitness"])
+        fitness_valid = _fitness_is_valid(best_fitness)
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        meta_note = f"cycle={cycle_index}; bench_fitness={best_fitness:.6f}"
+        if train_best_fitness is not None:
+            meta_note += f"; train_fitness={train_best_fitness:.6f}"
         meta = {
             "name": f"best_{timestamp}_c{cycle_index:03d}",
-            "note": f"cycle={cycle_index}; best_fitness={best_fitness:.6f}",
+            "note": meta_note,
         }
-        best_win_rate = _coerce_fitness(cycle_status.get("best_winrate_mean"))
-        best_ci_low = _coerce_fitness(cycle_status.get("best_winrate_ci_low"))
-        best_ci_high = _coerce_fitness(cycle_status.get("best_winrate_ci_high"))
-        best_win_lcb = _coerce_fitness(cycle_status.get("best_win_lcb"))
-        best_place_score = _coerce_fitness(cycle_status.get("best_place_score"))
-        best_advantage = _coerce_fitness(cycle_status.get("best_advantage"))
-        best_cutoff_rate = _coerce_fitness(cycle_status.get("best_cutoff_rate"))
-        opponents_source = "baseline" if bootstrap else "league_snapshot"
-        entry_eval_protocol = _build_training_eval_protocol(
+        bench_win_rate = float(promotion_result["win_rate"])
+        bench_ci_low = float(promotion_result["ci_low"])
+        bench_ci_high = float(promotion_result["ci_high"])
+        bench_win_lcb = float(promotion_result.get("win_lcb", bench_ci_low))
+        bench_place_score = float(promotion_result.get("place_score", 0.0))
+        bench_advantage = float(promotion_result.get("advantage", 0.0))
+        bench_cutoff_rate = float(promotion_result.get("cutoff_rate", 0.0))
+        bench_stop_reason = str(promotion_result.get("stop_reason", ""))
+
+        entry_eval_protocol = build_league_rebench_protocol(
             players=6,
-            games_per_cand=int(cycle_games_per_cand),
-            max_steps=int(max_steps),
-            cand_seats="rotate",
-            master_seed=int(seed),
-            opponents_source=opponents_source,
-            top_k_pool=int(top_k_pool),
+            games_per_cand=promotion_games,
+            max_steps=promotion_max_steps,
             league_cap=int(league_cap),
-            pool_snapshot_step=POOL_SNAPSHOT_STEP,
+            seed=promotion_seed,
+            cand_seats="rotate",
         )
         entry_eval_hash = eval_protocol_hash(entry_eval_protocol)
         entry_fields: dict[str, Any] = {
@@ -959,20 +1015,13 @@ def run_autoevolve(
             "source_run_id": runs_dir.name,
             "source_cycle": cycle_index,
         }
-        if best_win_rate is not None:
-            entry_fields["win_rate"] = float(best_win_rate)
-        if best_ci_low is not None:
-            entry_fields["win_rate_ci_low"] = float(best_ci_low)
-        if best_ci_high is not None:
-            entry_fields["win_rate_ci_high"] = float(best_ci_high)
-        if best_win_lcb is not None:
-            entry_fields["win_lcb"] = float(best_win_lcb)
-        if best_place_score is not None:
-            entry_fields["place_score"] = float(best_place_score)
-        if best_advantage is not None:
-            entry_fields["advantage"] = float(best_advantage)
-        if best_cutoff_rate is not None:
-            entry_fields["cutoff_rate"] = float(best_cutoff_rate)
+        entry_fields["win_rate"] = bench_win_rate
+        entry_fields["win_rate_ci_low"] = bench_ci_low
+        entry_fields["win_rate_ci_high"] = bench_ci_high
+        entry_fields["win_lcb"] = bench_win_lcb
+        entry_fields["place_score"] = bench_place_score
+        entry_fields["advantage"] = bench_advantage
+        entry_fields["cutoff_rate"] = bench_cutoff_rate
         status["candidates_produced"] = int(status.get("candidates_produced", 0) or 0) + 1
         status["candidates_evaluated"] = int(status.get("candidates_evaluated", 0) or 0) + 1
 
@@ -992,7 +1041,7 @@ def run_autoevolve(
             _bump_reject_reason(status, "dedup")
             rank = existing_entry.get("rank")
             add_reason = "dedup"
-            _write_dedup_example(cycle_dir, params_hash, best_fitness_raw, existing_entry)
+            _write_dedup_example(cycle_dir, params_hash, best_fitness, existing_entry)
         else:
             status["candidates_eligible_for_league"] = int(
                 status.get("candidates_eligible_for_league", 0) or 0
@@ -1019,6 +1068,21 @@ def run_autoevolve(
 
         short_hash = params_hash[:8]
         final_added = bool(added and rank is not None)
+        progress_line = (
+            "final bench | "
+            f"fitness {best_fitness:.4f} | "
+            f"win_rate {bench_win_rate:.3f} lcb {bench_win_lcb:.3f} | "
+            f"cutoff {bench_cutoff_rate:.3f} | "
+            f"games {promotion_games} | stop {bench_stop_reason}"
+        )
+        if promotion_pool_fallback:
+            progress_line += " | pool_fallback=baseline"
+        if train_best_fitness is not None:
+            progress_line += f" | train_fitness {train_best_fitness:.4f}"
+        progress_line += f" | added {'yes' if final_added else 'no'}"
+        if rank is not None:
+            progress_line += f" | rank {rank}"
+        _append_progress_line(cycle_dir / "progress.txt", progress_line)
         print(
             "best: "
             f"fitness={best_fitness:.6f} hash={short_hash} add={'yes' if final_added else 'no'} "

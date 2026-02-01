@@ -3,6 +3,7 @@ from __future__ import annotations
 import csv
 import html as html_lib
 import os
+import random
 import subprocess
 import sys
 import textwrap
@@ -115,7 +116,7 @@ def _utc_now() -> str:
 
 
 def _default_workers() -> int:
-    return max(1, (os.cpu_count() or 1) - 4)
+    return max(1, (os.cpu_count() or 1) - 8)
 
 
 def _html_escape(text: str) -> str:
@@ -1344,7 +1345,7 @@ def render_training_mode() -> None:
         top_k_pool = st.number_input("Top-K pool", min_value=1, value=16, step=1)
         league_cap = st.number_input("League cap", min_value=1, value=16, step=1)
         max_new_bests = st.number_input("Max new bests", min_value=1, value=16, step=1)
-        meta_plateau_cycles = st.number_input("Meta-plateau cycles", min_value=1, value=1, step=1)
+        meta_plateau_cycles = st.number_input("Meta-plateau cycles", min_value=1, value=3, step=1)
         bootstrap_min_league_for_pool = st.number_input(
             "Bootstrap min league",
             min_value=0,
@@ -1365,29 +1366,38 @@ def render_training_mode() -> None:
         )
 
         with st.expander("Advanced"):
-            seed = st.number_input("Seed", min_value=0, max_value=999999, value=123, step=1)
+            if "train_seed" not in st.session_state:
+                st.session_state.train_seed = random.randint(0, 999999)
+            seed = st.number_input(
+                "Seed",
+                min_value=0,
+                max_value=999999,
+                value=int(st.session_state.train_seed),
+                step=1,
+                key="train_seed",
+            )
             workers = st.number_input("Workers", min_value=1, value=_default_workers(), step=1)
             population = st.number_input("Population", min_value=16, value=64, step=1)
             elite = st.number_input("Elite", min_value=4, value=16, step=1)
             auto_games_per_cand = st.checkbox("Авто games per candidate", value=True)
             games_label = "Games per candidate (стартовое)" if auto_games_per_cand else "Games per candidate"
-            games_per_cand = st.number_input(games_label, min_value=1, value=16, step=1)
-            games_per_cand_min = 4
-            games_per_cand_max = 64
-            games_per_cand_target_ci = 0.20
+            games_per_cand = st.number_input(games_label, min_value=1, value=32, step=1)
+            games_per_cand_min = 8
+            games_per_cand_max = 128
+            games_per_cand_target_ci = 0.10
             if auto_games_per_cand:
-                games_per_cand_min = st.number_input("Games per candidate min", min_value=1, value=4, step=1)
+                games_per_cand_min = st.number_input("Games per candidate min", min_value=1, value=8, step=1)
                 games_per_cand_max = st.number_input(
                     "Games per candidate max",
                     min_value=int(games_per_cand_min),
-                    value=64,
+                    value=128,
                     step=1,
                 )
                 games_per_cand_target_ci = st.number_input(
                     "Target win-rate CI width",
                     min_value=0.01,
                     max_value=1.0,
-                    value=0.20,
+                    value=0.10,
                     step=0.01,
                     format="%.2f",
                 )
