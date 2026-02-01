@@ -1114,7 +1114,7 @@ def _start_live_match(
         "-m",
         "monopoly.live",
         "--players",
-        "6",
+        "4",
         "--params",
         str(params_path),
         "--workers",
@@ -1381,7 +1381,7 @@ def render_training_mode() -> None:
             elite = st.number_input("Elite", min_value=4, value=16, step=1)
             auto_games_per_cand = st.checkbox("Авто games per candidate", value=True)
             games_label = "Games per candidate (стартовое)" if auto_games_per_cand else "Games per candidate"
-            games_per_cand = st.number_input(games_label, min_value=1, value=32, step=1)
+            games_per_cand = st.number_input(games_label, min_value=1, value=8, step=1)
             games_per_cand_min = 8
             games_per_cand_max = 128
             games_per_cand_target_ci = 0.10

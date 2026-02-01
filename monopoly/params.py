@@ -16,8 +16,11 @@ from .features import (
     landing_prob_group,
     positional_threat_others,
     positional_threat_self,
+    positional_threat_others_turns,
+    positional_threat_self_turns,
     railroad_synergy,
     utility_synergy,
+    landing_prob_cell,
 )
 from .models import Cell, GameState, Player
 
@@ -48,10 +51,16 @@ AUCTION_FEATURES = [
     "owned_in_group",
     "positional_threat_self",
     "positional_threat_others",
+    "positional_threat_self_2",
+    "positional_threat_others_2",
     "railroad_synergy",
     "utility_synergy",
     "opponent_cash_min_norm",
     "opponent_cash_pressure",
+    "opp_owned_in_group_max",
+    "opp_cash_after_bid_min",
+    "short_term_rent_1",
+    "short_term_rent_2",
 ]
 
 BUILD_FEATURES = [
@@ -73,6 +82,8 @@ BUILD_FEATURES = [
     "bank_houses_ratio",
     "bank_hotels_ratio",
     "positional_threat_others",
+    "short_term_income_1",
+    "short_term_income_2",
     "house_scarcity",
     "hotel_scarcity",
     "denial_value",
@@ -224,10 +235,16 @@ def _default_weights() -> dict[str, dict[str, dict[str, float]]]:
         "owned_in_group": 0.6,
         "positional_threat_self": 0.0,
         "positional_threat_others": 0.0,
+        "positional_threat_self_2": 0.0,
+        "positional_threat_others_2": 0.0,
         "railroad_synergy": 0.0,
         "utility_synergy": 0.0,
         "opponent_cash_min_norm": 0.0,
         "opponent_cash_pressure": 0.0,
+        "opp_owned_in_group_max": 0.6,
+        "opp_cash_after_bid_min": -0.4,
+        "short_term_rent_1": 1.1,
+        "short_term_rent_2": 0.7,
     }
     build_base = {
         "bias": 0.0,
@@ -248,6 +265,8 @@ def _default_weights() -> dict[str, dict[str, dict[str, float]]]:
         "bank_houses_ratio": 0.2,
         "bank_hotels_ratio": 0.2,
         "positional_threat_others": 0.0,
+        "short_term_income_1": 0.6,
+        "short_term_income_2": 0.3,
         "house_scarcity": 0.0,
         "hotel_scarcity": 0.0,
         "denial_value": 0.0,
@@ -816,6 +835,58 @@ def _estimate_rent(state: GameState, cell: Cell) -> float:
     return 0.0
 
 
+def _owns_group_after_purchase(state: GameState, player_id: int, group: str | None, cell_index: int) -> bool:
+    if not group:
+        return False
+    for other in state.board:
+        if other.group != group:
+            continue
+        if other.index == cell_index:
+            continue
+        if other.owner_id != player_id:
+            return False
+    return True
+
+
+def _rent_if_owned(state: GameState, player_id: int, cell: Cell) -> float:
+    if cell.cell_type not in {"property", "railroad", "utility"}:
+        return 0.0
+    if cell.cell_type == "property":
+        if not cell.rent_by_houses:
+            return 0.0
+        level = _property_level(cell.houses, cell.hotels)
+        level = max(0, min(level, len(cell.rent_by_houses) - 1))
+        rent = float(cell.rent_by_houses[level])
+        if level == 0 and cell.group and _owns_group_after_purchase(state, player_id, cell.group, cell.index):
+            rent *= 2.0
+        return rent
+    if cell.cell_type == "railroad":
+        if not cell.rent:
+            return 0.0
+        owned = sum(
+            1
+            for other in state.board
+            if other.cell_type == "railroad" and other.owner_id == player_id
+        )
+        if cell.owner_id != player_id:
+            owned += 1
+        idx = max(0, min(owned - 1, len(cell.rent) - 1))
+        return float(cell.rent[idx])
+    if cell.cell_type == "utility":
+        if not cell.rent_multiplier:
+            return 0.0
+        owned = sum(
+            1
+            for other in state.board
+            if other.cell_type == "utility" and other.owner_id == player_id
+        )
+        if cell.owner_id != player_id:
+            owned += 1
+        multiplier = cell.rent_multiplier[1] if owned >= 2 else cell.rent_multiplier[0]
+        return float(multiplier * 7.0)
+    return 0.0
+
+
 def _max_opponent_rent(state: GameState, player_id: int) -> float:
     max_rent = 0.0
     for cell in state.board:
@@ -970,16 +1041,45 @@ def decide_auction_bid(
     risk = _max_opponent_rent(state, player.player_id) / max(1.0, player.money)
     threat_self = positional_threat_self(state, player.player_id) / start_cash
     threat_others = positional_threat_others(state, player.player_id) / start_cash
+    threat_self_2 = positional_threat_self_turns(state, player.player_id, turns=2) / start_cash
+    threat_others_2 = positional_threat_others_turns(state, player.player_id, turns=2) / start_cash
     opponent_cash_min_norm, opponent_cash_pressure = _opponent_cash_metrics(
         state, player.player_id
     )
     rr_synergy = railroad_synergy(state, player.player_id, cell)
     util_synergy = utility_synergy(state, player.player_id, cell)
+    opponents = [
+        opponent
+        for opponent in state.players
+        if opponent.player_id != player.player_id and not opponent.bankrupt
+    ]
+    rent_if_owned = _rent_if_owned(state, player.player_id, cell)
+    opp_land_prob_1 = sum(
+        landing_prob_cell(state, opp.position, cell.index, turns=1) for opp in opponents
+    )
+    opp_land_prob_2 = sum(
+        landing_prob_cell(state, opp.position, cell.index, turns=2) for opp in opponents
+    )
+    short_term_rent_1 = (opp_land_prob_1 * rent_if_owned) / start_cash
+    short_term_rent_2 = (opp_land_prob_2 * rent_if_owned) / start_cash
+    opp_owned_in_group_max = 0.0
+    if cell.cell_type == "property" and cell.group:
+        group_cells = _group_cells(state, cell.group)
+        group_size = max(1, len(group_cells))
+        for opponent in opponents:
+            owned_count = sum(1 for c in group_cells if c.owner_id == opponent.player_id)
+            opp_owned_in_group_max = max(opp_owned_in_group_max, owned_count / group_size)
 
     for bid in candidates:
         cash_after = player.money - bid
         if cash_after < 0:
             continue
+        if opponents:
+            opp_cash_after_bid_min = min(
+                opp.money - bid for opp in opponents
+            ) / start_cash
+        else:
+            opp_cash_after_bid_min = 0.0
         group_strength = _group_strength(state, cell.group)
         group_heat_score = group_heat(state, cell.group)
         group_heat_delta = group_heat_vs_base(state, cell.group)
@@ -1024,10 +1124,16 @@ def decide_auction_bid(
             "owned_in_group": owned_in_group,
             "positional_threat_self": threat_self,
             "positional_threat_others": threat_others,
+            "positional_threat_self_2": threat_self_2,
+            "positional_threat_others_2": threat_others_2,
             "railroad_synergy": rr_synergy,
             "utility_synergy": util_synergy,
             "opponent_cash_min_norm": opponent_cash_min_norm,
             "opponent_cash_pressure": opponent_cash_pressure,
+            "opp_owned_in_group_max": opp_owned_in_group_max,
+            "opp_cash_after_bid_min": opp_cash_after_bid_min * blocks,
+            "short_term_rent_1": short_term_rent_1,
+            "short_term_rent_2": short_term_rent_2,
         }
         score = _score_action(weights, features)
         if score > best_score:
@@ -1054,6 +1160,11 @@ def decide_build_actions(
     enemy_threat = _max_opponent_rent(state, player.player_id) / max(1.0, player.money)
     threat_others = positional_threat_others(state, player.player_id) / start_cash
     _, opponent_cash_pressure = _opponent_cash_metrics(state, player.player_id)
+    opponents = [
+        opp
+        for opp in state.players
+        if opp.player_id != player.player_id and not opp.bankrupt
+    ]
 
     available_cash = player.money
     local_houses = {cell.index: cell.houses for cell in state.board}
@@ -1097,6 +1208,14 @@ def decide_build_actions(
                 continue
             houses_to_take = 1 if current_level < 4 else 0
             hotels_to_take = 1 if current_level == 4 else 0
+            opp_land_prob_1 = sum(
+                landing_prob_cell(state, opp.position, cell.index, turns=1) for opp in opponents
+            )
+            opp_land_prob_2 = sum(
+                landing_prob_cell(state, opp.position, cell.index, turns=2) for opp in opponents
+            )
+            short_term_income_1 = (opp_land_prob_1 * rent_delta) / start_cash
+            short_term_income_2 = (opp_land_prob_2 * rent_delta) / start_cash
 
             features = {
                 "bias": 1.0,
@@ -1117,6 +1236,8 @@ def decide_build_actions(
                 "bank_houses_ratio": bank_houses_ratio,
                 "bank_hotels_ratio": bank_hotels_ratio,
                 "positional_threat_others": threat_others,
+                "short_term_income_1": short_term_income_1,
+                "short_term_income_2": short_term_income_2,
                 "house_scarcity": house_scarcity_value,
                 "hotel_scarcity": hotel_scarcity_value,
                 "denial_value": denial_value(

@@ -44,7 +44,7 @@ LAST_TRAIN_THINKING_USED = False
 SCORING_VERSION = "score_v2"
 FITNESS_CONFIDENCE = 0.80
 ADVANTAGE_SCALE = 1000.0
-PLACE_TO_SCORE = {1: 1.0, 2: 0.60, 3: 0.30, 4: 0.10, 5: 0.0, 6: 0.0}
+PLACE_TO_SCORE = {1: 1.0, 2: 0.50, 3: 0.10, 4: 0.0, 5: 0.0, 6: 0.0}
 FITNESS_COEFFS = {
     "win_lcb": 1000.0,
     "place_score": 10.0,
@@ -675,7 +675,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--population", type=int, default=48)
     parser.add_argument("--elite", type=int, default=12)
     parser.add_argument("--games-per-cand", type=int, default=20)
-    parser.add_argument("--players", type=int, default=6)
+    parser.add_argument("--players", type=int, default=4)
     parser.add_argument("--seed", type=int, default=123)
     parser.add_argument("--max-steps", type=int, default=2000)
     parser.add_argument("--opponents", type=str, choices=["baseline", "league", "mixed"], default="mixed")

@@ -101,7 +101,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--games", type=int, default=200)
     parser.add_argument("--seed", type=int, default=123)
     parser.add_argument("--max-steps", type=int, default=2000)
-    parser.add_argument("--players", type=int, default=6)
+    parser.add_argument("--players", type=int, default=4)
     parser.add_argument("--cand-seats", type=str, choices=["all", "rotate"], default="rotate")
     parser.add_argument("--keep", type=int, default=5)
     parser.add_argument("--min-games", type=int, default=50)

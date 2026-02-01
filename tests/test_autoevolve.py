@@ -231,7 +231,7 @@ def test_rebench_skipped_when_hashes_match(tmp_path: Path) -> None:
 
     add_to_league(BotParams(cash_buffer_base=151), 0.1, {"name": "l1"}, league_dir)
     protocol = build_league_rebench_protocol(
-        players=6,
+        players=4,
         games_per_cand=1,
         max_steps=10,
         league_cap=16,
@@ -290,7 +290,7 @@ def test_rebench_runs_on_unknown_hash(tmp_path: Path) -> None:
 
 def test_eval_protocol_hash_changes_on_params() -> None:
     protocol = build_league_rebench_protocol(
-        players=6,
+        players=4,
         games_per_cand=1,
         max_steps=10,
         league_cap=16,

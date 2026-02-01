@@ -109,15 +109,15 @@ def test_eval_determinism() -> None:
 
 def test_place_to_score_mapping() -> None:
     assert place_to_score(1) == 1.0
-    assert place_to_score(2) == 0.6
-    assert place_to_score(3) == 0.3
-    assert place_to_score(4) == 0.1
+    assert place_to_score(2) == 0.5
+    assert place_to_score(3) == 0.1
+    assert place_to_score(4) == 0.0
     assert place_to_score(5) == 0.0
     assert place_to_score(6) == 0.0
 
 
 def test_cutoff_outcome_uses_net_worth_ranking() -> None:
-    engine = create_engine(num_players=6, seed=1)
+    engine = create_engine(num_players=4, seed=1)
     state = engine.state
     for idx, player in enumerate(state.players):
         player.money = 1000 - idx * 100
@@ -127,7 +127,7 @@ def test_cutoff_outcome_uses_net_worth_ranking() -> None:
     top_outcome = win_like_outcome(placements[0], winner=False, ended_by_cutoff=True)
     second_outcome = win_like_outcome(placements[1], winner=False, ended_by_cutoff=True)
     assert top_outcome == 1.0
-    assert second_outcome == 0.6
+    assert second_outcome == 0.5
 
 
 def test_wilson_lcb_monotonicity() -> None:
@@ -176,9 +176,9 @@ def test_landing_prob_group_biases_orange() -> None:
 
 def test_league_rotation() -> None:
     seeds = [10, 11, 12, 13, 14, 15]
-    cases = build_eval_cases(seeds, num_players=6, cand_seats="rotate", seed=123)
+    cases = build_eval_cases(seeds, num_players=4, cand_seats="rotate", seed=123)
     seats = {seat for _, seat in cases}
-    assert seats == set(range(6))
+    assert seats == set(range(4))
 
 
 def test_bot_constraints() -> None:

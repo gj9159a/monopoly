@@ -42,6 +42,23 @@ def dice_sum_probs_2d6() -> Iterable[tuple[int, float]]:
     return DICE_SUM_PROBS
 
 
+_DICE_SUM_PROBS_2: tuple[tuple[int, float], ...] | None = None
+
+
+def _dice_sum_probs_turns(turns: int) -> tuple[tuple[int, float], ...]:
+    if turns <= 1:
+        return DICE_SUM_PROBS
+    global _DICE_SUM_PROBS_2
+    if _DICE_SUM_PROBS_2 is None:
+        totals: dict[int, float] = {}
+        for roll1, prob1 in DICE_SUM_PROBS:
+            for roll2, prob2 in DICE_SUM_PROBS:
+                total = roll1 + roll2
+                totals[total] = totals.get(total, 0.0) + prob1 * prob2
+        _DICE_SUM_PROBS_2 = tuple(sorted(totals.items()))
+    return _DICE_SUM_PROBS_2
+
+
 def _group_cells(state: GameState, group: str | None) -> list[int]:
     if not group:
         return []
@@ -274,28 +291,51 @@ def estimate_cell_payment(state: GameState, mover_id: int, cell_index: int) -> i
     return 0
 
 
-def positional_threat_self(state: GameState, player_id: int) -> float:
+def landing_prob_cell(
+    state: GameState,
+    start_pos: int,
+    target_idx: int,
+    turns: int = 1,
+) -> float:
+    board_size = len(state.board)
+    total = 0.0
+    for roll, prob in _dice_sum_probs_turns(turns):
+        idx = (start_pos + roll) % board_size
+        if idx == target_idx:
+            total += prob
+    return total
+
+
+def positional_threat_self_turns(state: GameState, player_id: int, turns: int = 1) -> float:
     player = state.players[player_id]
     board_size = len(state.board)
     total = 0.0
-    for roll, prob in DICE_SUM_PROBS:
+    for roll, prob in _dice_sum_probs_turns(turns):
         idx = (player.position + roll) % board_size
         total += prob * estimate_cell_payment(state, player_id, idx)
     return total
 
 
-def positional_threat_others(state: GameState, player_id: int) -> float:
+def positional_threat_others_turns(state: GameState, player_id: int, turns: int = 1) -> float:
     total = 0.0
     board_size = len(state.board)
     for opponent in state.players:
         if opponent.player_id == player_id or opponent.bankrupt:
             continue
-        for roll, prob in DICE_SUM_PROBS:
+        for roll, prob in _dice_sum_probs_turns(turns):
             idx = (opponent.position + roll) % board_size
             if state.board[idx].owner_id != player_id:
                 continue
             total += prob * estimate_cell_payment(state, opponent.player_id, idx)
     return total
+
+
+def positional_threat_self(state: GameState, player_id: int) -> float:
+    return positional_threat_self_turns(state, player_id, turns=1)
+
+
+def positional_threat_others(state: GameState, player_id: int) -> float:
+    return positional_threat_others_turns(state, player_id, turns=1)
 
 
 def house_scarcity(state: GameState) -> float:

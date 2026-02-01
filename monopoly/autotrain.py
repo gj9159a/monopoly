@@ -479,7 +479,7 @@ def build_parser() -> argparse.ArgumentParser:
     run_parser.add_argument("--bench-max-games", type=int, default=512)
     run_parser.add_argument("--delta", type=float, default=1.0)
     run_parser.add_argument("--seed", type=int, default=123)
-    run_parser.add_argument("--players", type=int, default=6)
+    run_parser.add_argument("--players", type=int, default=4)
     run_parser.add_argument("--max-steps", type=int, default=2000)
     run_parser.add_argument("--population", type=int, default=None)
     run_parser.add_argument("--elite", type=int, default=None)

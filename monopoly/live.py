@@ -232,7 +232,7 @@ def run_live(
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Live-симуляция с прогрессом планировщика")
-    parser.add_argument("--players", type=int, default=6)
+    parser.add_argument("--players", type=int, default=4)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--params", type=Path, default=None)
     parser.add_argument("--mode", type=str, choices=["deep", "fast"], default="fast")

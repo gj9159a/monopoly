@@ -738,7 +738,7 @@ def run_autoevolve(
     rebench_seed = int(league_rebench_seed) if league_rebench_seed is not None else int(seed)
 
     league_eval_protocol = build_league_rebench_protocol(
-        players=6,
+        players=4,
         games_per_cand=rebench_games,
         max_steps=rebench_max_steps,
         league_cap=int(league_cap),
@@ -781,7 +781,7 @@ def run_autoevolve(
             max_steps=rebench_max_steps,
             seed=rebench_seed,
             cand_seats="rotate",
-            players=6,
+            players=4,
             workers=workers,
         )
         status.update(
@@ -927,7 +927,7 @@ def run_autoevolve(
             bench_max_games=bench_max_games,
             delta=delta,
             seed=cycle_seed,
-            players=6,
+            players=4,
             max_steps=max_steps,
             population=population,
             elite=elite,
@@ -968,7 +968,7 @@ def run_autoevolve(
             baseline=baseline,
             league_dir=league_dir,
             opponents="league",
-            num_players=6,
+            num_players=4,
             games=promotion_games,
             seed=promotion_seed,
             max_steps=promotion_max_steps,
@@ -1000,7 +1000,7 @@ def run_autoevolve(
         bench_stop_reason = str(promotion_result.get("stop_reason", ""))
 
         entry_eval_protocol = build_league_rebench_protocol(
-            players=6,
+            players=4,
             games_per_cand=promotion_games,
             max_steps=promotion_max_steps,
             league_cap=int(league_cap),

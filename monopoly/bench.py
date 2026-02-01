@@ -223,7 +223,7 @@ def bench(
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Бенчмарк кандидата против baseline/league")
     parser.add_argument("--games", type=int, default=200)
-    parser.add_argument("--players", type=int, default=6)
+    parser.add_argument("--players", type=int, default=4)
     parser.add_argument("--seed", type=int, default=123)
     parser.add_argument("--max-steps", type=int, default=2000)
     parser.add_argument("--min-games", type=int, default=50)
