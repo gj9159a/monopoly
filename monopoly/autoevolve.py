@@ -1128,7 +1128,7 @@ def build_parser() -> argparse.ArgumentParser:
     run_parser.add_argument("--league-rebench-seed", type=int, default=None)
     run_parser.add_argument("--population", type=int, default=48)
     run_parser.add_argument("--elite", type=int, default=12)
-    run_parser.add_argument("--games-per-cand", type=int, default=20)
+    run_parser.add_argument("--games-per-cand", type=int, default=16)
     run_parser.add_argument("--auto-games-per-cand", type=_parse_bool, default=False)
     run_parser.add_argument("--games-per-cand-min", type=int, default=DEFAULT_GAMES_PER_CAND_MIN)
     run_parser.add_argument("--games-per-cand-max", type=int, default=DEFAULT_GAMES_PER_CAND_MAX)

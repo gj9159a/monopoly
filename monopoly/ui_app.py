@@ -1381,20 +1381,19 @@ def render_training_mode() -> None:
             elite = st.number_input("Elite", min_value=4, value=16, step=1)
             auto_games_per_cand = st.checkbox("Авто games per candidate", value=True)
             games_label = "Games per candidate (стартовое)" if auto_games_per_cand else "Games per candidate"
-            games_per_cand = st.number_input(games_label, min_value=1, value=8, step=1)
-            games_per_cand_min = 8
+            games_per_cand = st.number_input(games_label, min_value=1, value=16, step=1)
+            games_per_cand_min = 1
             games_per_cand_max = 128
             games_per_cand_target_ci = 0.10
             if auto_games_per_cand:
-                games_per_cand_min = st.number_input("Games per candidate min", min_value=1, value=8, step=1)
                 games_per_cand_max = st.number_input(
                     "Games per candidate max",
-                    min_value=int(games_per_cand_min),
+                    min_value=1,
                     value=128,
                     step=1,
                 )
-                if not (games_per_cand_min <= games_per_cand <= games_per_cand_max):
-                    st.warning("Стартовое Games per candidate вне диапазона min/max; будет приведено к границам.")
+                if games_per_cand > games_per_cand_max:
+                    st.warning("Стартовое Games per candidate превышает max; будет приведено к max.")
                 st.caption("Авто: +8 games per candidate при meta-plateau.")
             league_rebench_games = st.number_input(
                 "Games for re-benchmark",
