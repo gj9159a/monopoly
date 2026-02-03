@@ -508,7 +508,6 @@ def _ensure_status_defaults(status: dict[str, Any], runs_dir: Path) -> dict[str,
     status.setdefault("games_per_cand_target_ci", 0.0)
     status.setdefault("games_per_cand_current", 0)
     status.setdefault("games_per_cand_prev", 0)
-    status.setdefault("games_per_cand_prev_ci_width", None)
     status.setdefault("cycle_games_per_cand", 0)
     status.setdefault("bench_max_games", 0)
     status.setdefault("min_progress_games", 0)
@@ -588,39 +587,6 @@ def _clamp_int(value: int, min_value: int, max_value: int) -> int:
     return max(min_value, min(max_value, int(value)))
 
 
-def _load_prev_bench_ci(runs_dir: Path, cycle_index: int) -> tuple[float | None, float | None]:
-    if cycle_index <= 0:
-        return None, None
-    bench_path = runs_dir / f"cycle_{cycle_index:03d}" / "last_bench.json"
-    payload = read_json(bench_path, default=None)
-    if not isinstance(payload, dict):
-        return None, None
-    ci_low = payload.get("ci_low")
-    ci_high = payload.get("ci_high")
-    if not isinstance(ci_low, (int, float)) or not isinstance(ci_high, (int, float)):
-        return None, None
-    return float(ci_low), float(ci_high)
-
-
-def _auto_games_per_cand(
-    base_games: int,
-    ci_low: float | None,
-    ci_high: float | None,
-    min_games: int,
-    max_games: int,
-    target_ci: float,
-) -> tuple[int, float | None]:
-    base_games = _clamp_int(base_games, min_games, max_games)
-    if ci_low is None or ci_high is None:
-        return base_games, None
-    width = float(ci_high) - float(ci_low)
-    if width <= 0 or target_ci <= 0:
-        return base_games, width
-    scale = width / target_ci
-    next_games = _clamp_int(int(round(base_games * scale * scale)), min_games, max_games)
-    return next_games, width
-
-
 def _cycle_status_path(cycle_dir: Path) -> Path:
     return cycle_dir / "status.json"
 
@@ -676,8 +642,6 @@ def run_autoevolve(
         raise ValueError("games_per_cand_min должен быть >= 1")
     if int(games_per_cand_max) < int(games_per_cand_min):
         raise ValueError("games_per_cand_max должен быть >= games_per_cand_min")
-    if auto_games_per_cand and float(games_per_cand_target_ci) <= 0:
-        raise ValueError("games_per_cand_target_ci должен быть > 0 при авто-режиме")
     runs_dir.mkdir(parents=True, exist_ok=True)
     status_path = _status_path(runs_dir)
 
@@ -795,8 +759,34 @@ def run_autoevolve(
     current_cycle = int(status.get("current_cycle", 0))
     new_bests_count = int(status.get("new_bests_count", 0))
     meta_plateau = int(status.get("meta_plateau", 0))
+    stop_reason = ""
 
-    while new_bests_count < max_new_bests and meta_plateau < meta_plateau_cycles:
+    while new_bests_count < max_new_bests:
+        if meta_plateau >= meta_plateau_cycles:
+            if auto_games_per_cand:
+                current_games = int(status.get("games_per_cand_current") or games_per_cand)
+                max_games = int(games_per_cand_max)
+                if current_games < max_games:
+                    next_games = _clamp_int(
+                        current_games + 8,
+                        int(games_per_cand_min),
+                        max_games,
+                    )
+                    meta_plateau = 0
+                    status.update(
+                        {
+                            "meta_plateau": meta_plateau,
+                            "games_per_cand_prev": int(current_games),
+                            "games_per_cand_current": int(next_games),
+                        }
+                    )
+                    _write_status(status_path, status)
+                else:
+                    stop_reason = "meta_plateau_max_games"
+                    break
+            else:
+                stop_reason = "meta_plateau"
+                break
         resume_cycle = False
         cycle_dir = None
         if resume and status.get("cycle_in_progress"):
@@ -850,18 +840,13 @@ def run_autoevolve(
                 pool_snapshot = _snapshot_pool(items, rng, top_k_pool, league_cap)
 
             prev_games = int(status.get("games_per_cand_current") or games_per_cand)
-            cycle_games_per_cand = prev_games
-            prev_ci_width = None
             if auto_games_per_cand:
-                ci_low, ci_high = _load_prev_bench_ci(runs_dir, current_cycle)
-                cycle_games_per_cand, prev_ci_width = _auto_games_per_cand(
-                    base_games=prev_games,
-                    ci_low=ci_low,
-                    ci_high=ci_high,
-                    min_games=int(games_per_cand_min),
-                    max_games=int(games_per_cand_max),
-                    target_ci=float(games_per_cand_target_ci),
+                prev_games = _clamp_int(
+                    prev_games,
+                    int(games_per_cand_min),
+                    int(games_per_cand_max),
                 )
+            cycle_games_per_cand = prev_games
 
             status.update(
                 {
@@ -873,7 +858,6 @@ def run_autoevolve(
                     "cycle_seed": cycle_seed,
                     "pool_snapshot_seed": pool_snapshot_seed,
                     "games_per_cand_prev": int(prev_games),
-                    "games_per_cand_prev_ci_width": prev_ci_width,
                     "games_per_cand_current": int(cycle_games_per_cand),
                     "cycle_games_per_cand": int(cycle_games_per_cand),
                     "prev_topk_hashes": sorted(prev_topk.hashes),
@@ -1118,9 +1102,8 @@ def run_autoevolve(
 
         current_cycle = cycle_index
 
-        if new_bests_count >= max_new_bests or meta_plateau >= meta_plateau_cycles:
-            break
-
+    if stop_reason:
+        status["stop_reason"] = stop_reason
     status.update({"current_phase": "finished"})
     _write_status(status_path, status)
 

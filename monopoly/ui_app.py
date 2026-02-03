@@ -1393,17 +1393,9 @@ def render_training_mode() -> None:
                     value=128,
                     step=1,
                 )
-                games_per_cand_target_ci = st.number_input(
-                    "Target win-rate CI width",
-                    min_value=0.01,
-                    max_value=1.0,
-                    value=0.10,
-                    step=0.01,
-                    format="%.2f",
-                )
                 if not (games_per_cand_min <= games_per_cand <= games_per_cand_max):
                     st.warning("Стартовое Games per candidate вне диапазона min/max; будет приведено к границам.")
-                st.caption("Авто использует ширину CI win-rate из предыдущего цикла (last_bench.json).")
+                st.caption("Авто: +8 games per candidate при meta-plateau.")
             league_rebench_games = st.number_input(
                 "Games for re-benchmark",
                 min_value=10,
@@ -1592,13 +1584,10 @@ def render_training_mode() -> None:
             or 0
         )
         if auto_games:
-            prev_ci_width = meta_status.get("games_per_cand_prev_ci_width")
-            target_ci = meta_status.get("games_per_cand_target_ci")
-            prev_ci_text = f"{prev_ci_width:.3f}" if isinstance(prev_ci_width, (int, float)) else "—"
-            target_ci_text = f"{float(target_ci):.2f}" if isinstance(target_ci, (int, float)) else "—"
+            games_max = int(meta_status.get("games_per_cand_max") or 0)
             st.caption(
                 "Games per candidate (auto): "
-                f"{games_current} | prev CI width: {prev_ci_text} | target CI: {target_ci_text}"
+                f"{games_current} | +8 on meta-plateau | max {games_max}"
             )
         else:
             st.caption(f"Games per candidate: {games_current}")
